@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Settings | Vision Vanguard</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <div id="root"></div>
+
+
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+
+  <script type="text/babel">
+
+    /* 
+    BACKEND: Lahat ng data sa page nato galing sa constants sa baba (SETTINGS, PAIRING, ZONE, CAMERA_OPTIONS, ALERT_CHANNELS).
+    REPLACE NYO YUNG CONSTANTS. DUN NYO ILAGAY YUNG API DATA.*/ 
+    // BACKEND: SETTINGS - Eto yung current values ng lahat ng inputs sa page nato. Yung field names ay same sa keys sa baba. Yung confidence ay number from 50 to 100, yung alertEmergency and alertFault ay true or false, yung iba ay strings. Pag '' yung recipient or retention, walang saved value (placeholder lang lalabas).
+    const SETTINGS = {
+      camera: 'Camera B · South',
+      redClearance: '5',
+      minGreen: '10',
+      maxGreen: '30',
+      confidence: 90,
+      emergencyHold: '30',
+      alertChannel: 'Telegram bot',
+      recipient: '',
+      alertEmergency: true,
+      alertFault: true,
+      retention: '',
+    };
+
+    // BACKEND: PAIRING - isa per vehicle pair. Yung allowed ay true or false lang.
+    const PAIRING = [
+      { id: 1, pair: '2W + 2W', allowed: true },
+      { id: 2, pair: '2W + 4W', allowed: false },
+      { id: 3, pair: '4W + 4W', allowed: false },
+    ];
+
+    // BACKEND: ZONE - Yung saved ay true or false (pang "Zone saved" badge). Yung area ay yung detection zone, naka percent (0 to 100) ng preview, hindi pixels. Yung boxes ay sample detections lang sa preview.
+    const ZONE = {
+      saved: true,
+      vertices: 4,
+      coverage: '21%',
+      tag: 'Camera B / South · Simulated preview',
+      stamp: 'CAM B / 2026-10-14 15:24:08',
+      size: '1280 × 720 · 24 fps',
+      area: { left: 33, top: 28, width: 33, height: 62 },
+      boxes: [
+        { id: 1, type: '4w', label: '4W · car · 98.4%', left: 38, top: 34, width: 9, height: 32 },
+        { id: 2, type: '2w', label: '2W · motorcycle · 95.2%', left: 54, top: 58, width: 6, height: 24 },
+      ],
+    };
+
+    // BACKEND: CAMERA_OPTIONS and ALERT_CHANNELS - eto yung laman ng dropdowns. Pwede nyong dagdagan or bawasan.
+    const CAMERA_OPTIONS = ['Camera A · North', 'Camera B · South'];
+    const ALERT_CHANNELS = ['Telegram bot', 'SMS', 'Email'];
+
+    const { useState } = React;
+
+    function LogoMark() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M7 20V4M3 8l4-4 4 4" />
+          <path d="M17 4v16M13 16l4 4 4-4" />
+        </svg>
+      );
+    }
+
+    function DashboardIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="7" height="9" rx="1" />
+          <rect x="14" y="3" width="7" height="5" rx="1" />
+          <rect x="14" y="12" width="7" height="9" rx="1" />
+          <rect x="3" y="16" width="7" height="5" rx="1" />
+        </svg>
+      );
+    }
+
+    function LiveIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="2" />
+          <path d="M4.93 19.07a10 10 0 0 1 0-14.14" />
+          <path d="M7.76 16.24a6 6 0 0 1 0-8.48" />
+          <path d="M16.24 7.76a6 6 0 0 1 0 8.48" />
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+        </svg>
+      );
+    }
+
+    function ReportsIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 3v18h18" />
+          <path d="M18 17V9" />
+          <path d="M13 17V5" />
+          <path d="M8 17v-3" />
+        </svg>
+      );
+    }
+
+    function UsersIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+      );
+    }
+
+    function SettingsIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M21 4h-7" />
+          <path d="M10 4H3" />
+          <path d="M21 12h-9" />
+          <path d="M8 12H3" />
+          <path d="M21 20h-5" />
+          <path d="M12 20H3" />
+          <path d="M14 2v4" />
+          <path d="M8 10v4" />
+          <path d="M16 18v4" />
+        </svg>
+      );
+    }
+
+    function CalendarIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="18" rx="2" />
+          <path d="M16 2v4" />
+          <path d="M8 2v4" />
+          <path d="M3 10h18" />
+        </svg>
+      );
+    }
+
+    function BellIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+          <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+        </svg>
+      );
+    }
+
+    function LogoutIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+          <path d="m16 17 5-5-5-5" />
+          <path d="M21 12H9" />
+        </svg>
+      );
+    }
+
+    function DownloadIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M12 15V3" />
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <path d="m7 10 5 5 5-5" />
+        </svg>
+      );
+    }
+
+    function SaveIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+          <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" />
+          <path d="M7 3v4a1 1 0 0 0 1 1h7" />
+        </svg>
+      );
+    }
+
+    function ResetIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+          <path d="M3 3v5h5" />
+        </svg>
+      );
+    }
+
+    function CameraIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z" />
+          <circle cx="12" cy="13" r="3" />
+        </svg>
+      );
+    }
+
+    function DrawZoneIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M8 3H5a2 2 0 0 0-2 2v3" />
+          <path d="M21 8V5a2 2 0 0 0-2-2h-3" />
+          <path d="M3 16v3a2 2 0 0 0 2 2h3" />
+          <path d="M16 21h3a2 2 0 0 0 2-2v-3" />
+        </svg>
+      );
+    }
+
+    function EraserIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21" />
+          <path d="M22 21H7" />
+          <path d="m5 11 9 9" />
+        </svg>
+      );
+    }
+
+    function DatabaseIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <ellipse cx="12" cy="5" rx="9" ry="3" />
+          <path d="M3 5V19A9 3 0 0 0 21 19V5" />
+          <path d="M3 12A9 3 0 0 0 21 12" />
+        </svg>
+      );
+    }
+
+    const NAV_ITEMS = [
+      { label: 'Dashboard', icon: <DashboardIcon />, active: false },
+      { label: 'Live control', icon: <LiveIcon />, active: false },
+      { label: 'Reports', icon: <ReportsIcon />, active: false },
+      { label: 'Users', icon: <UsersIcon />, active: false },
+      { label: 'Settings', icon: <SettingsIcon />, active: true },
+    ];
+
+
+    function Sidebar() {
+      return (
+        <aside className="sidebar">
+          <header className="brand brand--sidebar">
+            <span className="brand__mark"><LogoMark /></span>
+            <span className="brand__name">
+              <span>Vision</span>
+              <span>Vanguard</span>
+            </span>
+          </header>
+
+          <p className="sidebar__label">Operations workspace</p>
+
+          <nav className="nav">
+            {/* 
+              BACKEND: LAHAT ng nav links ay "#" for now. 
+              Bigyan nyo lahat ng item ng real route and tas i set active nyo sa current page. 
+            */}
+            {NAV_ITEMS.map((item) => (
+              <a
+                key={item.label}
+                className={`nav__item${item.active ? ' is-active' : ''}`}
+                href="#"
+              >
+                {item.icon}
+                <span>{item.label}</span>
+              </a>
+            ))}
+          </nav>
+
+
+          <footer className="sidebar__footer">
+            <div className="user">
+              <span className="user__avatar">IT</span>
+              <span className="user__info">
+                <span className="user__name">Irene Ticzon</span>
+                <span className="user__role">Administrator</span>
+              </span>
+            </div>
+          
+            <button type="button" className="logout">
+              <LogoutIcon />
+              Logout
+            </button>
+          </footer>
+        </aside>
+      );
+    }
+
+
+    function Topbar() {
+      return (
+        <header className="topbar">
+          <h1 className="topbar__title">Settings</h1>
+
+          <div className="topbar__actions">
+
+            <button type="button" className="date-button">
+              <CalendarIcon />
+              Today
+            </button>
+
+            <p className="topbar__time">14 Oct 2026 · 15:24:08 PHT</p>
+
+            <p className="badge badge--online">
+              <span className="badge__dot" />
+              System online
+            </p>
+
+            <span className="topbar__bell"><BellIcon /></span>
+          </div>
+        </header>
+      );
+    }
+
+
+
+    function SettingsToolbar({ onReset }) {
+      return (
+        <div className="toolbar toolbar--end">
+          {/* 
+            BACKEND: Yung Reset to defaults ay ibabalik yung lahat sa default values (naka lagay na onReset). 
+            Yung Save changes naman ay dapat mag send ng buong values and pairing sa save endpoint (lagyan nyo ng onClick).
+          */}
+          <button type="button" className="action-button action-button--light" onClick={onReset}>
+            <ResetIcon />
+            Reset to defaults
+          </button>
+          <button type="button" className="action-button action-button--green">
+            <SaveIcon />
+            Save changes
+          </button>
+        </div>
+      );
+    }
+
+
+    function ZonePanel({ values, onChange }) {
+      return (
+        <section className="panel">
+          <div className="panel__header panel__header--center">
+            <h2 className="panel__title">Camera detection zones</h2>
+            {ZONE.saved && (
+              <span className="badge badge--soft">
+                <span className="badge__dot" />
+                Zone saved
+              </span>
+            )}
+          </div>
+
+          <div className="zone-toolbar">
+            <div className="field">
+              <label className="field__label" htmlFor="camera">Camera</label>
+              <select
+                className="field__input field__select"
+                id="camera"
+                name="camera"
+                value={values.camera}
+                onChange={onChange}
+              >
+                {CAMERA_OPTIONS.map((camera) => (
+                  <option key={camera} value={camera}>{camera}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* BACKEND: Lagyan nyo ng onClick yung Preview A. Dapat ipakita nya yung preview ng kabilang camera. */}
+            <button type="button" className="action-button action-button--light">
+              <CameraIcon />
+              Preview A
+            </button>
+          </div>
+
+          {/* 
+            BACKEND: Dito yung camera preview. Pwede nyong palitan ng <video> or <img> stream. 
+            Yung zone-box ay yung detection zone (ZONE.area), pag nag Draw zone dapat mag update to.
+          */}
+          <div className="camera__view camera__view--wide">
+            <span className="camera__lane camera__lane--left" />
+            <span className="camera__lane camera__lane--center" />
+            <span className="camera__lane camera__lane--right" />
+            <span className="camera__tag">{ZONE.tag}</span>
+
+            <span
+              className="zone-box"
+              style={{
+                left: `${ZONE.area.left}%`,
+                top: `${ZONE.area.top}%`,
+                width: `${ZONE.area.width}%`,
+                height: `${ZONE.area.height}%`,
+              }}
+            >
+              <span className="zone-box__label">Detection zone · {ZONE.vertices} vertices</span>
+              <span className="zone-box__handle zone-box__handle--tl" />
+              <span className="zone-box__handle zone-box__handle--tr" />
+              <span className="zone-box__handle zone-box__handle--bl" />
+              <span className="zone-box__handle zone-box__handle--br" />
+            </span>
+
+            {ZONE.boxes.map((box) => (
+              <span
+                key={box.id}
+                className={`detect-box detect-box--${box.type}`}
+                style={{
+                  left: `${box.left}%`,
+                  top: `${box.top}%`,
+                  width: `${box.width}%`,
+                  height: `${box.height}%`,
+                }}
+              >
+                <span className="detect-box__vehicle" />
+                <span className="detect-box__label">{box.label}</span>
+              </span>
+            ))}
+
+            <span className="camera__stamp">{ZONE.stamp}</span>
+            <span className="camera__size">{ZONE.size}</span>
+          </div>
+
+          {/* BACKEND: Lagyan nyo ng onClick yung Draw zone and Clear zone. Yung ZONE.coverage ay percent ng preview na sakop ng zone. */}
+          <div className="zone-actions">
+            <button type="button" className="action-button action-button--teal">
+              <DrawZoneIcon />
+              Draw zone
+            </button>
+            <button type="button" className="action-button action-button--light">
+              <EraserIcon />
+              Clear zone
+            </button>
+            <p className="zone-actions__note">Detection region: {ZONE.coverage} of preview</p>
+          </div>
+        </section>
+      );
+    }
+
+
+    function TimingPanel({ values, onChange }) {
+      return (
+        <section className="panel">
+          <h2 className="panel__title">Signal timing</h2>
+
+          <div className="stack-form">
+            <div className="field">
+              <label className="field__label" htmlFor="redClearance">Red clearance interval (s)</label>
+              <input
+                className="field__input"
+                id="redClearance"
+                name="redClearance"
+                type="text"
+                inputMode="numeric"
+                value={values.redClearance}
+                onChange={onChange}
+              />
+            </div>
+
+            <div className="field-pair">
+              <div className="field">
+                <label className="field__label" htmlFor="minGreen">Minimum green (s)</label>
+                <input
+                  className="field__input"
+                  id="minGreen"
+                  name="minGreen"
+                  type="text"
+                  inputMode="numeric"
+                  value={values.minGreen}
+                  onChange={onChange}
+                />
+              </div>
+              <div className="field">
+                <label className="field__label" htmlFor="maxGreen">Maximum green (s)</label>
+                <input
+                  className="field__input"
+                  id="maxGreen"
+                  name="maxGreen"
+                  type="text"
+                  inputMode="numeric"
+                  value={values.maxGreen}
+                  onChange={onChange}
+                />
+              </div>
+            </div>
+
+            {/* BACKEND: Yung slider ang nag cocontrol ng confidence (50 to 100). Yung text sa taas nya ay display lang (readOnly). */}
+            <div className="field">
+              <label className="field__label" htmlFor="confidenceText">Classification confidence threshold</label>
+              <input
+                className="field__input"
+                id="confidenceText"
+                type="text"
+                value={`${values.confidence}%`}
+                readOnly
+              />
+              <input
+                type="range"
+                className="range"
+                name="confidence"
+                min="50"
+                max="100"
+                step="1"
+                value={values.confidence}
+                onChange={onChange}
+                aria-label="Classification confidence threshold"
+              />
+            </div>
+
+            <div className="field">
+              <label className="field__label" htmlFor="emergencyHold">Emergency hold time (s) · Simulation</label>
+              <input
+                className="field__input"
+                id="emergencyHold"
+                name="emergencyHold"
+                type="text"
+                inputMode="numeric"
+                value={values.emergencyHold}
+                onChange={onChange}
+              />
+            </div>
+          </div>
+        </section>
+      );
+    }
+
+
+    function PairingPanel({ pairing, onToggle }) {
+      const enabled = pairing.filter((rule) => rule.allowed).map((rule) => rule.pair).join(', ');
+
+      return (
+        <section className="panel">
+          <h2 className="panel__title">Pairing rules</h2>
+          <p className="panel__subtitle">Who may pass together</p>
+
+          <div className="table-wrap">
+            <table className="table table--compact">
+              <thead>
+                <tr>
+                  <th>Vehicle pair</th>
+                  <th>Allowed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pairing.map((rule) => (
+                  <tr key={rule.id}>
+                    <td className="table__strong">{rule.pair}</td>
+                    <td>
+                      <label className="checkbox">
+                        <input
+                          type="checkbox"
+                          checked={rule.allowed}
+                          onChange={() => onToggle(rule.id)}
+                        />
+                        <span>{rule.allowed ? 'Allowed' : 'Not allowed'}</span>
+                      </label>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* BACKEND: Yung note sa baba ay automatic na nag uupdate base sa PAIRING. Yung "Defaults to confirmed after on-site testing." ay fixed text lang. */}
+          <p className="note-box">
+            <span className="note-box__title">
+              {enabled ? `${enabled} pairing enabled` : 'No pairing enabled'}
+            </span>
+            <span className="note-box__text">Defaults to confirmed after on-site testing.</span>
+          </p>
+        </section>
+      );
+    }
+
+
+    function AlertsPanel({ values, onChange }) {
+      return (
+        <section className="panel">
+          <h2 className="panel__title">Alerts and data</h2>
+          <p className="panel__subtitle">Notification preferences and record retention</p>
+
+          <div className="form-grid">
+            <div className="field">
+              <label className="field__label" htmlFor="alertChannel">Alert channel</label>
+              <select
+                className="field__input field__select"
+                id="alertChannel"
+                name="alertChannel"
+                value={values.alertChannel}
+                onChange={onChange}
+              >
+                {ALERT_CHANNELS.map((channel) => (
+                  <option key={channel} value={channel}>{channel}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="field">
+              <label className="field__label" htmlFor="recipient">Recipient (Chat ID or number)</label>
+              <input
+                className="field__input"
+                id="recipient"
+                name="recipient"
+                type="text"
+                placeholder="123456789101"
+                value={values.recipient}
+                onChange={onChange}
+              />
+            </div>
+          </div>
+
+          <div className="checkbox-list">
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                name="alertEmergency"
+                checked={values.alertEmergency}
+                onChange={onChange}
+              />
+              <span>Alert when an emergency vehicle is detected</span>
+            </label>
+            <label className="checkbox">
+              <input
+                type="checkbox"
+                name="alertFault"
+                checked={values.alertFault}
+                onChange={onChange}
+              />
+              <span>Alert on camera or controller fault</span>
+            </label>
+          </div>
+
+          <div className="field field--narrow">
+            <label className="field__label" htmlFor="retention">Log retention (days)</label>
+            <input
+              className="field__input"
+              id="retention"
+              name="retention"
+              type="text"
+              inputMode="numeric"
+              placeholder="1,10,30..."
+              value={values.retention}
+              onChange={onChange}
+            />
+          </div>
+
+          {/* BACKEND: Lagyan nyo ng onClick yung Back up now (mag back up ng records) and Export configuration (mag download ng settings file). */}
+          <div className="button-row button-row--start">
+            <button type="button" className="action-button action-button--blue">
+              <DatabaseIcon />
+              Back up now
+            </button>
+            <button type="button" className="action-button action-button--teal">
+              <DownloadIcon />
+              Export configuration
+            </button>
+          </div>
+        </section>
+      );
+    }
+
+
+    function App() {
+      const [values, setValues] = useState(SETTINGS);
+      const [pairing, setPairing] = useState(PAIRING);
+
+      const handleChange = (event) => {
+        const { name, type, value, checked } = event.target;
+        setValues((prev) => ({
+          ...prev,
+          [name]: type === 'checkbox' ? checked : value,
+        }));
+      };
+
+      const handleToggle = (id) => {
+        setPairing((prev) =>
+          prev.map((rule) => (rule.id === id ? { ...rule, allowed: !rule.allowed } : rule))
+        );
+      };
+
+      const handleReset = () => {
+        // BACKEND: Ngayon ibabalik lang nito sa SETTINGS and PAIRING sa taas. Palitan nyo ng real default values galing sa system.
+        setValues(SETTINGS);
+        setPairing(PAIRING);
+      };
+
+      return (
+        <div className="page page--dashboard">
+          <Sidebar />
+          <main className="main">
+            <Topbar />
+            <div className="content">
+              <SettingsToolbar onReset={handleReset} />
+              <div className="split split--left">
+                <ZonePanel values={values} onChange={handleChange} />
+                <TimingPanel values={values} onChange={handleChange} />
+              </div>
+              <div className="split split--right">
+                <PairingPanel pairing={pairing} onToggle={handleToggle} />
+                <AlertsPanel values={values} onChange={handleChange} />
+              </div>
+            </div>
+          </main>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
