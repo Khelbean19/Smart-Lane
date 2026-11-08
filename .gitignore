@@ -218,3 +218,44 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ===== SmartLane (FastAPI + React + PostgreSQL + YOLOv8) =====
+
+# Environment / secrets (keep .env.example tracked)
+.env.*
+!.env.example
+
+# Node / React (Vite)
+node_modules/
+frontend/dist/
+npm-debug.log*
+yarn-error.log*
+.vite/
+
+# Allow frontend source folders that match the Python rules above (lib/, build/)
+!frontend/src/lib/
+!frontend/src/build/
+
+# YOLOv8 weights and training data
+*.pt
+*.onnx
+runs/
+ml/dataset/*
+!ml/dataset/.gitkeep
+
+# Runtime data (camera snapshots, recordings, DB backups)
+snapshots/
+*.mp4
+*.avi
+*.dump
+*.sql.bak
+
+# Docker volumes / pgAdmin local data
+pgdata/
+pgadmin-data/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard | Vision Vanguard</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <div id="root"></div>
+
+
+  <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+
+  <script type="text/babel">
+
+    /* 
+    BACKEND: Lahat ng number na ginagamit sa page nato galing sa constants sa baba (STATS, HOURLY, AXIS, PEAK, EVENTS).
+    REPLACE NYO YUNG CONSTANTS. GAWIN NYO DUN NYO ILAGAY YUNG API DATA.*/ 
+    // BACKEND: STATS - Gain nyo string lagi yung  label, value and note as strings. Yung "tone" pumipili sa card color (orange, blue, green, yellow, red) Gawin nyong as is lang to.
+    const STATS = [
+      { label: 'Vehicles today', value: '1,240', note: '08:00-15:24 · Both ends', tone: 'orange' },
+      { label: '2W : 4W split', value: '60% : 40%', note: '744 2W / 496 4W', tone: 'blue' },
+      { label: 'Average wait', value: '18s', note: 'Across both directions', tone: 'green' },
+      { label: 'Maximum wait', value: '46s', note: 'Recorded at 10:18', tone: 'yellow' },
+      { label: 'Emergency activations', value: '02', note: 'Simulated events · Resolved', tone: 'red' },
+    ];
+
+    // BACKEND: HOURLY - one row per hour. Yunng hour ay 'HH:00' string, twoW and fourW naman ay numbers. Bar heights are computed from these, no styling needed.
+    const HOURLY = [
+      { hour: '08:00', twoW: 43, fourW: 27 },
+      { hour: '09:00', twoW: 78, fourW: 52 },
+      { hour: '10:00', twoW: 125, fourW: 95 },
+      { hour: '11:00', twoW: 100, fourW: 60 },
+      { hour: '12:00', twoW: 70, fourW: 40 },
+      { hour: '13:00', twoW: 115, fourW: 85 },
+      { hour: '14:00', twoW: 138, fourW: 92 },
+      { hour: '15:00', twoW: 75, fourW: 45 },
+    ];
+
+    // BACKEND: Kung yung isa sa mga hour's total (twoW + fourW) kaya lumagpas above 240, i raise AXIS_MAX and i update AXIS para ma match (highest value first, evenly spaced, ending at 0).
+    const AXIS = [240, 180, 120, 60, 0];
+    const AXIS_MAX = 240;
+
+    // BACKEND: PEAK - the hour with the highest total (twoW + fourW). Yung vehicles ay number, hour namna naka ganitong format 'HH:00', yung share is yung 2W percentage ng hour nayon as a string like '60%'.
+    const PEAK = { vehicles: 230, hour: '14:00', share: '60%' };
+
+    // BACKEND: EVENTS - latest events, newest first (alam nyo nayan). Gawin nyong unique yung id (eto gagamitin as row key). YUNG decision kailangan exactly 'Go' or 'Wait' kase it picks the badge color. Yung time is HH:MM:SS in PHT.
+    /*
+      GOODLUCK SAINYO GUYSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS
+    */
+    const EVENTS = [
+      { id: 1, time: '15:24:08', end: 'A / North', vehicle: '4W · car', decision: 'Go', mode: 'Automatic' },
+      { id: 2, time: '15:24:06', end: 'B / South', vehicle: '2W · bicycle', decision: 'Wait', mode: 'Automatic' },
+      { id: 3, time: '15:24:04', end: 'A / North', vehicle: '2W · motorcycle', decision: 'Go', mode: 'Automatic' },
+      { id: 4, time: '14:42:18', end: 'A / North', vehicle: '4W · car', decision: 'Go', mode: 'Automatic' },
+    ];
+
+    const { useState } = React;
+
+
+    function LogoMark() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M7 20V4M3 8l4-4 4 4" />
+          <path d="M17 4v16M13 16l4 4 4-4" />
+        </svg>
+      );
+    }
+
+    function DashboardIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="7" height="9" rx="1" />
+          <rect x="14" y="3" width="7" height="5" rx="1" />
+          <rect x="14" y="12" width="7" height="9" rx="1" />
+          <rect x="3" y="16" width="7" height="5" rx="1" />
+        </svg>
+      );
+    }
+
+    function LiveIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="2" />
+          <path d="M4.93 19.07a10 10 0 0 1 0-14.14" />
+          <path d="M7.76 16.24a6 6 0 0 1 0-8.48" />
+          <path d="M16.24 7.76a6 6 0 0 1 0 8.48" />
+          <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+        </svg>
+      );
+    }
+
+    function ReportsIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 3v18h18" />
+          <path d="M18 17V9" />
+          <path d="M13 17V5" />
+          <path d="M8 17v-3" />
+        </svg>
+      );
+    }
+
+    function UsersIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+          <circle cx="9" cy="7" r="4" />
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+        </svg>
+      );
+    }
+
+    function SettingsIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M21 4h-7" />
+          <path d="M10 4H3" />
+          <path d="M21 12h-9" />
+          <path d="M8 12H3" />
+          <path d="M21 20h-5" />
+          <path d="M12 20H3" />
+          <path d="M14 2v4" />
+          <path d="M8 10v4" />
+          <path d="M16 18v4" />
+        </svg>
+      );
+    }
+
+    function CalendarIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="3" y="4" width="18" height="18" rx="2" />
+          <path d="M16 2v4" />
+          <path d="M8 2v4" />
+          <path d="M3 10h18" />
+        </svg>
+      );
+    }
+
+    function BellIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" />
+          <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
+        </svg>
+      );
+    }
+
+    function LogoutIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+          <path d="m16 17 5-5-5-5" />
+          <path d="M21 12H9" />
+        </svg>
+      );
+    }
+
+    function BarsIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M6 20v-6" />
+          <path d="M12 20V4" />
+          <path d="M18 20v-10" />
+        </svg>
+      );
+    }
+
+    function ArrowIcon() {
+      return (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M5 12h14" />
+          <path d="m12 5 7 7-7 7" />
+        </svg>
+      );
+    }
+
+    const NAV_ITEMS = [
+      { label: 'Dashboard', icon: <DashboardIcon />, active: true },
+      { label: 'Live control', icon: <LiveIcon />, active: false },
+      { label: 'Reports', icon: <ReportsIcon />, active: false },
+      { label: 'Users', icon: <UsersIcon />, active: false },
+      { label: 'Settings', icon: <SettingsIcon />, active: false },
+    ];
+
+
+    function Sidebar() {
+      return (
+        <aside className="sidebar">
+          <header className="brand brand--sidebar">
+            <span className="brand__mark"><LogoMark /></span>
+            <span className="brand__name">
+              <span>Vision</span>
+              <span>Vanguard</span>
+            </span>
+          </header>
+
+          <p className="sidebar__label">Operations workspace</p>
+
+          <nav className="nav">
+            {/* 
+              BACKEND: LAHAT ng nav links ay "#" for now. 
+              Bigyan nyo lahat ng item ng real route and tas i set active nyo sa current page. 
+            */}
+            {NAV_ITEMS.map((item) => (
+              <a
+                key={item.label}
+                className={`nav__item${item.active ? ' is-active' : ''}`}
+                href="#"
+              >
+                {item.icon}
+                <span>{item.label}</span>
+              </a>
+            ))}
+          </nav>
+
+
+          <footer className="sidebar__footer">
+            <div className="user">
+              <span className="user__avatar">IT</span>
+              <span className="user__info">
+                <span className="user__name">Irene Ticzon</span>
+                <span className="user__role">Administrator</span>
+              </span>
+            </div>
+          
+            <button type="button" className="logout">
+              <LogoutIcon />
+              Logout
+            </button>
+          </footer>
+        </aside>
+      );
+    }
+
+
+    function Topbar() {
+      return (
+        <header className="topbar">
+          <h1 className="topbar__title">Dashboard</h1>
+
+          <div className="topbar__actions">
+
+            <button type="button" className="date-button">
+              <CalendarIcon />
+              Today
+            </button>
+
+            <p className="topbar__time">14 Oct 2026 · 15:24:08 PHT</p>
+
+            <p className="badge badge--online">
+              <span className="badge__dot" />
+              System online
+            </p>
+
+            <span className="topbar__bell"><BellIcon /></span>
+          </div>
+        </header>
+      );
+    }
+
+
+    function StatCards() {
+      return (
+        <section className="stats">
+          {STATS.map((stat) => (
+            <article key={stat.label} className={`stat-card stat-card--${stat.tone}`}>
+              <p className="stat-card__label">{stat.label}</p>
+              <p className="stat-card__value">{stat.value}</p>
+              <p className="stat-card__note">{stat.note}</p>
+            </article>
+          ))}
+        </section>
+      );
+    }
+
+
+    function TrafficChart() {
+      return (
+        <section className="panel">
+          <div className="panel__header">
+            <div>
+
+              <h2 className="panel__title">Traffic volume by hour</h2>
+              <p className="panel__subtitle">Both ends · 1,240 vehicles classified</p>
+            </div>
+
+            <span className="badge badge--soft">
+              <span className="badge__dot" />
+              Today
+            </span>
+          </div>
+
+          <div className="chart">
+            <div className="chart__legend">
+              <span className="chart__legend-title">Vehicles (count)</span>
+              <span className="chart__legend-item chart__legend-item--2w">2W</span>
+              <span className="chart__legend-item chart__legend-item--4w">4W</span>
+            </div>
+
+            <div className="chart__scroll">
+              <div className="chart__body">
+                <div className="chart__axis">
+                  {AXIS.map((value) => (
+                    <span key={value}>{value}</span>
+                  ))}
+                </div>
+
+                <div className="chart__plot">
+                  <div className="chart__grid" aria-hidden="true">
+                    {AXIS.map((value) => (
+                      <span key={value} className="chart__gridline" />
+                    ))}
+                  </div>
+
+                  <div className="chart__bars">
+                    {HOURLY.map((item) => (
+                      <div key={item.hour} className="chart__col">
+                        <div className="chart__stack">
+                          <span
+                            className="chart__bar chart__bar--4w"
+                            style={{ height: `${(item.fourW / AXIS_MAX) * 100}%` }}
+                            title={`${item.hour} · 4W: ${item.fourW}`}
+                          />
+                          <span
+                            className="chart__bar chart__bar--2w"
+                            style={{ height: `${(item.twoW / AXIS_MAX) * 100}%` }}
+                            title={`${item.hour} · 2W: ${item.twoW}`}
+                          />
+                        </div>
+                        <span className="chart__hour">{item.hour}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+
+            <p className="chart__footnote">Sample data (08:00-15:24)</p>
+          </div>
+
+          <p className="peak">
+            <BarsIcon />
+            Peak volume: {PEAK.vehicles} vehicles at {PEAK.hour} · {PEAK.share} classified as 2W
+          </p>
+        </section>
+      );
+    }
+
+
+    function RecentEvents() {
+      return (
+        <section className="panel">
+          <div className="panel__header panel__header--center">
+            <h2 className="panel__title">Recent events</h2>
+
+            <a className="text-link text-link--small" href="#events">
+              View all events
+              <ArrowIcon />
+            </a>
+          </div>
+
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Time (PHT)</th>
+                  <th>End</th>
+                  <th>Vehicle</th>
+                  <th>Decision</th>
+                  <th>Mode</th>
+                </tr>
+              </thead>
+              <tbody>
+                {EVENTS.map((event) => (
+                  <tr key={event.id}>
+                    <td>{event.time}</td>
+                    <td>{event.end}</td>
+                    <td>{event.vehicle}</td>
+                    <td>
+                      <span className={`badge badge--${event.decision.toLowerCase()}`}>
+                        <span className="badge__dot" />
+                        {event.decision}
+                      </span>
+                    </td>
+                    <td>{event.mode}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      );
+    }
+
+
+    function App() {
+      return (
+        <div className="page page--dashboard">
+          <Sidebar />
+          <main className="main">
+            <Topbar />
+            <div className="content">
+              <StatCards />
+              <TrafficChart />
+              <RecentEvents />
+            </div>
+          </main>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
