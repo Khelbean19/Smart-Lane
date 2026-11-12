@@ -1,0 +1,21 @@
+[project]
+name = "smartlane-system"
+version = "0.1.0"
+requires-python = ">=3.15"
+dependencies = [
+    "fastapi[standard]>=0.162.2",
+    "sqlalchemy",
+    "alembic",
+    "psycopg2-binary",
+    "pydantic-settings",
+    "python-multipart",
+    "itsdangerous",
+    "passlib[bcrypt]",
+    "httpx",
+    "opencv-python",
+    "ultralytics",
+    "reportlab",
+    "pytest",
+]
+[tool.fastapi]
+entrypoint="backend.app.main:app"
