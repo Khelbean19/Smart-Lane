@@ -1,5 +1,6 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -25,16 +26,17 @@
 
     /* 
     BACKEND: Lahat ng data sa page nato galing sa constants sa baba (USERS, ROLES, STATUSES, PERMISSIONS).
-    REPLACE NYO YUNG CONSTANTS. DUN NYO ILAGAY YUNG API DATA.*/ 
+    REPLACE NYO YUNG CONSTANTS. DUN NYO ILAGAY YUNG API DATA.*/
     // BACKEND: USERS - isa per account. Yung role ay isa sa ROLES. YUNG status kailangan exactly 'Active' or 'Disabled' kase eto pumipili ng badge color. Yung lastDate and lastTime ay strings (PHT).
+
     const USERS = [
-      { id: 1, name: 'Irene Ticzon', username: 'maria.irene', role: 'Admin', status: 'Active', lastDate: '14 Oct 2026', lastTime: '08:02 PHT' },
-      { id: 2, name: 'Khelvin Galvez', username: 'khelbean', role: 'Traffic enforcer', status: 'Active', lastDate: '14 Oct 2026', lastTime: '08:10 PHT' },
-      { id: 3, name: 'Loui Naquita', username: 'admiral.larwix', role: 'Traffic enforcer', status: 'Active', lastDate: '13 Oct 2026', lastTime: '16:32 PHT' },
+      // { id: 1, name: 'Irene Ticzon', username: 'maria.irene', role: 'Admin', status: 'Active', lastDate: '14 Oct 2026', lastTime: '08:02 PHT' },
+      // { id: 2, name: 'Khelvin Galvez', username: 'khelbean', role: 'Traffic enforcer', status: 'Active', lastDate: '14 Oct 2026', lastTime: '08:10 PHT' },
+      // { id: 3, name: 'Loui Naquita', username: 'admiral.larwix', role: 'Traffic enforcer', status: 'Active', lastDate: '13 Oct 2026', lastTime: '16:32 PHT' },
     ];
 
     // BACKEND: ROLES and STATUSES - eto yung laman ng dropdowns (filters at Add user form). Pwede nyong dagdagan or bawasan.
-    const ROLES = ['Admin', 'Traffic enforcer'];
+    const ROLES = ['Administrator', 'Traffic Enforcer'];
     const STATUSES = ['Active', 'Disabled'];
 
     // BACKEND: PERMISSIONS - isa per permission. Yung admin and enforcer ay true or false lang. true = check mark, false = dash.
@@ -256,7 +258,7 @@
                 <span className="user__role">Administrator</span>
               </span>
             </div>
-          
+
             <button type="button" className="logout">
               <LogoutIcon />
               Logout
@@ -438,15 +440,19 @@
       // BACKEND: PREFILLED LANG YUNG FORM SA BABA PARA MA MATCH SA DESIGN. Gawin nyong '' lahat ng initial values (at active: true) pag nilagay nyo na sa app.
       // BACKEND: Yung form field names ay fullName, email, username, role, password and active. Eto gamitin nyo pag mag se send ng create user request.
       const [values, setValues] = useState({
-        fullName: 'Stephen Rey Bulahan',
-        email: 'strbulahan@gmail.com',
-        username: 'strbulahan',
-        role: 'Traffic enforcer',
-        password: 'TempPass#2026',
-        active: true,
+        fullName: '',
+        email: '',
+        username: '',
+      
+        // TODO @momspider: Translate from frontend UI yung values ng `role` para maging
+        // either ADMINISTRATOR or ENFORCER lang, since ayun lang narerecognize ng database.
+        role: '',
+        password: '',
+        phone: '',
+        active: true,  // TODO: Translate rin from boolean true/false to either ACTIVE or DISABLED since yun yung enum na need ni database
       });
       const [showPassword, setShowPassword] = useState(false);
-
+      
       const handleChange = (event) => {
         const { name, type, value, checked } = event.target;
         setValues((prev) => ({
@@ -454,11 +460,36 @@
           [name]: type === 'checkbox' ? checked : value,
         }));
       };
-
-      const handleSubmit = (event) => {
+      
+      const handleSubmit = async (event) => {
         event.preventDefault();
         // BACKEND: ise send nyo yung values sa create user endpoint dito.
         // BACKEND: Pag success i reset nyo yung form and i refresh yung USERS table. On failure show an error message (basic error handling lang yan).
+        try {
+          console.log(values);
+          const response = await fetch("/api/v1/users", {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+
+            // TODO: Dagdagan lang ng frontend sanitation para malinis na agad yung input pag-fetch
+            body: JSON.stringify({
+              "full_name": values["fullName"],
+              "email": values["email"],
+              "username": values["username"],
+              "role": values["role"],
+              "password": values["password"],
+              "phone": values["phone"],
+              "status": values["active"] ? "ACTIVE" : "DISABLED",
+            })
+          });
+          if (!response.ok) {
+            throw new Error(`Response status: ${response.status}`);
+          }
+        } catch (error) {
+          console.error(error.message);
+        }
       };
 
       return (
@@ -500,6 +531,20 @@
                 name="username"
                 type="text"
                 value={values.username}
+                onChange={handleChange}
+                required
+              />
+            </div>
+
+            // TODO: Appropriate fields para numbers lang accepted
+            <div className="field">
+              <label className="field__label" htmlFor="phone">Phone Number</label>
+              <input
+                className="field__input"
+                id="phone"
+                name="phone"
+                type="text"
+                value={values.phone}
                 onChange={handleChange}
                 required
               />
@@ -583,8 +628,8 @@
               <thead>
                 <tr>
                   <th>Permission</th>
-                  <th>Admin</th>
-                  <th>Traffic enforcer</th>
+                  <th>Administrator</th>
+                  <th>Traffic Enforcer</th>
                 </tr>
               </thead>
               <tbody>
@@ -637,4 +682,5 @@
     ReactDOM.createRoot(document.getElementById('root')).render(<App />);
   </script>
 </body>
+
 </html>
