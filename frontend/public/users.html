@@ -36,8 +36,8 @@
     ];
 
     // BACKEND: ROLES and STATUSES - eto yung laman ng dropdowns (filters at Add user form). Pwede nyong dagdagan or bawasan.
-    const ROLES = ['Administrator', 'Traffic Enforcer'];
-    const STATUSES = ['Active', 'Disabled'];
+    const ROLES = ['ADMINISTRATOR', 'ENFORCER'];
+    const STATUSES = ['ACTIVE', 'DISABLED'];
 
     // BACKEND: PERMISSIONS - isa per permission. Yung admin and enforcer ay true or false lang. true = check mark, false = dash.
     const PERMISSIONS = [
@@ -445,11 +445,11 @@
         username: '',
       
         // TODO @momspider: Translate from frontend UI yung values ng `role` para maging
-        // either ADMINISTRATOR or ENFORCER lang, since ayun lang narerecognize ng database.
-        role: '',
+        // either 'ADMINISTRATOR' or 'ENFORCER' lang, since ayun lang narerecognize ng database.
+        role: 'ADMINISTRATOR',
         password: '',
         phone: '',
-        active: true,  // TODO: Translate rin from boolean true/false to either ACTIVE or DISABLED since yun yung enum na need ni database
+        active: true,  // TODO: Translate rin from boolean true/false to either 'ACTIVE' or 'DISABLED' since yun yung enum na need ni database
       });
       const [showPassword, setShowPassword] = useState(false);
       
@@ -461,6 +461,7 @@
         }));
       };
       
+      // why do i even have to suffer writing api fetch calls :(
       const handleSubmit = async (event) => {
         event.preventDefault();
         // BACKEND: ise send nyo yung values sa create user endpoint dito.
@@ -475,13 +476,13 @@
 
             // TODO: Dagdagan lang ng frontend sanitation para malinis na agad yung input pag-fetch
             body: JSON.stringify({
-              "full_name": values["fullName"],
-              "email": values["email"],
-              "username": values["username"],
-              "role": values["role"],
-              "password": values["password"],
-              "phone": values["phone"],
-              "status": values["active"] ? "ACTIVE" : "DISABLED",
+              "full_name":  values.fullName,
+              "email":      values.email,
+              "username":   values.username,
+              "role":       values.role,
+              "password":   values.password,
+              "phone":      values.phone,  // make sure na strictly 12 digit string ito
+              "status":     values.active ? "ACTIVE" : "DISABLED",
             })
           });
           if (!response.ok) {
@@ -535,8 +536,6 @@
                 required
               />
             </div>
-
-            // TODO: Appropriate fields para numbers lang accepted
             <div className="field">
               <label className="field__label" htmlFor="phone">Phone Number</label>
               <input

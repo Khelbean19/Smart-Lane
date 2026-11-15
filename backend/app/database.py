@@ -2,7 +2,7 @@ import psycopg2
 import os
 from loguru import logger
 
-POSTGRES_USERNAME = os.getenv("POSTGRES_USERNAME")
+POSTGRES_USER = os.getenv("POSTGRES_USER")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 POSTGRES_DB = os.getenv("POSTGRES_DB")
 POSTGRES_HOST = os.getenv("POSTGRES_HOST")
@@ -11,7 +11,7 @@ POSTGRES_PORT = os.getenv("POSTGRES_PORT")
 def main():
     conn_string = f"host='{POSTGRES_HOST}' " \
                   f"dbname='{POSTGRES_DB}' " \
-                  f"user='{POSTGRES_USERNAME}' " \
+                  f"user='{POSTGRES_USER}' " \
                   f"password='{POSTGRES_PASSWORD}' " \
                   f"port={POSTGRES_PORT}"
     try:

@@ -1,11 +1,12 @@
 import hashlib
 import sys
+import psycopg2
 import uvicorn
 from loguru import logger
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from backend.app import database
-from .models import User, Camera
+from .models import UserIn, UserAuth, Camera
 from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
 
@@ -37,24 +38,51 @@ async def root():
     return {"message": "SmartLane server is currently up."}
 
 
-@app.post("/api/v1/users/")
-async def create_user(user: User):
+@app.post("/api/v1/auth/")
+async def auth_user(credentials: UserAuth):
     if connection and cursor:
-        cursor.execute("INSERT INTO users " \
-                       "(full_name, username, email, phone, password_hash, role, status) " \
-                       "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                       (user.full_name,
-                        user.username,
-                        user.email,
-                        user.phone,
-                        hashlib.sha256(user.password.encode("utf-8")).hexdigest(),  # dont fuck this up, for security reasons
-                        user.role,
-                        user.status))
-        connection.commit()
-    return {
-        "message": "User created successfully",
-        "user": user
-    }
+        cursor.execute("SELECT user_id, username, password_hash FROM users WHERE username=%s OR email=%s LIMIT 1",
+                       (credentials.username,
+                        credentials.username))
+        data = cursor.fetchone()
+        
+        ## TODO: FastAPI security authentication stuff
+        # sobrang basic lang nitong auth/security, kahit sino kayang i-DDOS or brute force tong server nang di man lang pagpapawisan
+        if not data: raise HTTPException(400, "Account credentials are incorrect.")
+        _password_hash = hashlib.sha256(credentials.password.encode("utf-8")).hexdigest()
+        if _password_hash != data["password_hash"]:
+            raise HTTPException(400, "Account credentials are incorrect.")
+        return {
+            "message": "Account found and password is correct. Here take some cookies 🍪 (full auth implementation WIP)",
+            "user_id": data["user_id"]
+        }
+    else:
+        raise HTTPException(500)
+
+
+@app.post("/api/v1/users/")
+async def create_user(user: UserIn):
+    if connection and cursor:
+        try:
+            cursor.execute("INSERT INTO users " \
+                           "(full_name, username, email, phone, password_hash, role, status) " \
+                           "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                           (user.full_name,
+                            user.username,
+                            "null" if user.email is None else user.email,
+                            user.phone,
+                            hashlib.sha256(user.password.encode("utf-8")).hexdigest(),  # dont fuck this up, for security reasons
+                            user.role,
+                            user.status))
+            connection.commit()
+            return {
+                "message": "User created successfully"
+            }
+        except psycopg2.errors.UniqueViolation:
+            connection.rollback()
+            raise HTTPException(400, "An account with the same username, email, or phone number already exists.")
+    else:
+        raise HTTPException(500)
 
 
 @app.get("/api/v1/users/")  # TODO (OPTIONAL): Add query parameters for pagination

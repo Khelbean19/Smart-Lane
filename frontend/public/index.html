@@ -188,12 +188,29 @@
         }));
       };
 
-      const handleSubmit = (event) => {
+      const handleSubmit = async (event) => {
         event.preventDefault();
         // LOU or STEPH: ise send nyo yung values.username, values.password and values.remember sa login endpoint dito.
         // LOU or STEPH: Pag success redirect sa dashboard.html. On failure show an error message (Alam nyo nayan basic error handling lang yan).
+        try {
+          const response = await fetch("/api/v1/auth", {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
 
-
+            body: JSON.stringify({
+              "username": values.username,
+              "password": values.password,
+              "remember": values.remember,
+            })
+          });
+          if (!response.ok) {
+            throw new Error(`Response status: ${response.status}`);
+          }
+        } catch (error) {
+          console.error(error.message);
+        }
       };
 
       return (
