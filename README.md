@@ -66,6 +66,8 @@ Name the file to something like `.env.dev`.
 - POSTGRES_DB - The name of the local database (e.g., `smartlane-db`)
 - POSTGRES_HOST - Use `localhost` for local development
 - POSTGRES_PORT - The port number exposed from the `docker run` command
+- AUTH_SECRET_KEY - A private signing key for API bearer tokens. Generate one with
+  `python -c "import secrets; print(secrets.token_urlsafe(32))"` and keep it out of source control.
 
 The environment file should look like:
 ```
@@ -74,6 +76,7 @@ POSTGRES_PASSWORD=mypassword123!
 POSTGRES_DB=smartlane-db
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
+AUTH_SECRET_KEY=replace-with-a-random-secret
 ```
 
 The values of these variables should point to your database configuration that were used during the
@@ -83,9 +86,18 @@ Use `uv run --env-file .env.dev fastapi dev` to run the backend server with the 
 variables. Omitting the environment file will likely cause the project to fail when it attempts to
 connect to the postgres database.
 
+The OAuth2 token endpoint is `POST /api/v1/auth/token` and accepts form fields `username` and
+`password`. Send its `access_token` as `Authorization: Bearer <token>` when calling
+`/api/v1/users/`. Both user-listing and user-creation operations require an active
+`ADMINISTRATOR` account; provision the first administrator directly in the database.
+The web login keeps an unchecked sign-in in the current browser session (15-minute token). With
+**Remember me** checked, the browser persists the sign-in across restarts, but the signed token
+expires after seven days and the client returns to the login page when it expires.
+
 
 ### Frontend
-Folder structure only for now. The frontend dev will set up the React (Vite) app inside `frontend/`.
+FastAPI serves the static React/Babel pages from `frontend/public/`. Shared authentication behavior
+is in `session.js`, and `clock.js` formats live timestamps in Philippine Time.
 
 ### Tests
 ```bash

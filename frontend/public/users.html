@@ -21,6 +21,7 @@
   <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+  <script src="/session.js"></script>
 
   <script type="text/babel">
 
@@ -28,12 +29,6 @@
     BACKEND: Lahat ng data sa page nato galing sa constants sa baba (USERS, ROLES, STATUSES, PERMISSIONS).
     REPLACE NYO YUNG CONSTANTS. DUN NYO ILAGAY YUNG API DATA.*/
     // BACKEND: USERS - isa per account. Yung role ay isa sa ROLES. YUNG status kailangan exactly 'Active' or 'Disabled' kase eto pumipili ng badge color. Yung lastDate and lastTime ay strings (PHT).
-
-    const USERS = [
-      // { id: 1, name: 'Irene Ticzon', username: 'maria.irene', role: 'Admin', status: 'Active', lastDate: '14 Oct 2026', lastTime: '08:02 PHT' },
-      // { id: 2, name: 'Khelvin Galvez', username: 'khelbean', role: 'Traffic enforcer', status: 'Active', lastDate: '14 Oct 2026', lastTime: '08:10 PHT' },
-      // { id: 3, name: 'Loui Naquita', username: 'admiral.larwix', role: 'Traffic enforcer', status: 'Active', lastDate: '13 Oct 2026', lastTime: '16:32 PHT' },
-    ];
 
     // BACKEND: ROLES and STATUSES - eto yung laman ng dropdowns (filters at Add user form). Pwede nyong dagdagan or bawasan.
     const ROLES = ['ADMINISTRATOR', 'ENFORCER'];
@@ -49,7 +44,17 @@
       { id: 6, name: 'Edit settings', admin: true, enforcer: false },
     ];
 
-    const { useState } = React;
+    const { useEffect, useState } = React;
+    const userDateFormatter = new Intl.DateTimeFormat('en-PH', {
+      dateStyle: 'medium',
+      timeZone: 'Asia/Manila',
+    });
+    const userTimeFormatter = new Intl.DateTimeFormat('en-PH', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'Asia/Manila',
+    });
 
     function LogoMark() {
       return (
@@ -211,15 +216,31 @@
     }
 
     const NAV_ITEMS = [
-      { label: 'Dashboard', icon: <DashboardIcon />, active: false },
-      { label: 'Live control', icon: <LiveIcon />, active: false },
-      { label: 'Reports', icon: <ReportsIcon />, active: false },
-      { label: 'Users', icon: <UsersIcon />, active: true },
-      { label: 'Settings', icon: <SettingsIcon />, active: false },
+      { label: 'Dashboard', href: '/dashboard', icon: <DashboardIcon />, active: false },
+      { label: 'Live control', href: '/live', icon: <LiveIcon />, active: false },
+      { label: 'Reports', href: '/reports', icon: <ReportsIcon />, active: false },
+      { label: 'Users', href: '/users', icon: <UsersIcon />, active: true },
+      { label: 'Settings', href: '/settings', icon: <SettingsIcon />, active: false },
     ];
 
 
     function Sidebar() {
+      const [currentUser, setCurrentUser] = useState(null);
+      const [profileError, setProfileError] = useState(false);
+
+      useEffect(() => {
+        let isMounted = true;
+        window.smartLaneSession.getCurrentUser()
+          .then((user) => {
+            if (isMounted && user) setCurrentUser(user);
+          })
+          .catch((error) => {
+            console.error(error);
+            if (isMounted) setProfileError(true);
+          });
+        return () => { isMounted = false; };
+      }, []);
+
       return (
         <aside className="sidebar">
           <header className="brand brand--sidebar">
@@ -233,15 +254,11 @@
           <p className="sidebar__label">Operations workspace</p>
 
           <nav className="nav">
-            {/* 
-              BACKEND: LAHAT ng nav links ay "#" for now. 
-              Bigyan nyo lahat ng item ng real route and tas i set active nyo sa current page. 
-            */}
             {NAV_ITEMS.map((item) => (
               <a
                 key={item.label}
                 className={`nav__item${item.active ? ' is-active' : ''}`}
-                href="#"
+                href={item.href}
               >
                 {item.icon}
                 <span>{item.label}</span>
@@ -252,14 +269,20 @@
 
           <footer className="sidebar__footer">
             <div className="user">
-              <span className="user__avatar">IT</span>
+              <span className="user__avatar">
+                {currentUser ? window.smartLaneSession.getInitials(currentUser) : ''}
+              </span>
               <span className="user__info">
-                <span className="user__name">Irene Ticzon</span>
-                <span className="user__role">Administrator</span>
+                <span className="user__name">
+                  {currentUser ? currentUser.full_name : profileError ? 'Profile unavailable' : 'Loading profile...'}
+                </span>
+                <span className="user__role">
+                  {currentUser ? window.smartLaneSession.formatRole(currentUser.role) : ''}
+                </span>
               </span>
             </div>
 
-            <button type="button" className="logout">
+            <button type="button" className="logout" onClick={window.smartLaneSession.logout}>
               <LogoutIcon />
               Logout
             </button>
@@ -365,12 +388,58 @@
 
 
     function UserTable() {
+      const [users, setUsers] = useState([]);
+      const [isLoading, setIsLoading] = useState(true);
+      const [errorMessage, setErrorMessage] = useState('');
+
+      useEffect(() => {
+        let isMounted = true;
+        window.smartLaneSession.authenticatedFetch('/api/v1/users/')
+          .then(async (response) => {
+            const result = await response.json();
+            if (!response.ok) {
+              throw new Error(result.detail || `Could not load users (HTTP ${response.status}).`);
+            }
+            if (!Array.isArray(result.data)) {
+              throw new Error('The users response has an invalid format.');
+            }
+            if (isMounted) {
+              setUsers(result.data.map((user) => {
+                const lastLogin = user.last_login ? new Date(user.last_login) : null;
+                return {
+                  id: user.user_id,
+                  name: user.full_name,
+                  username: user.username,
+                  role: user.role === 'ADMINISTRATOR' ? 'Administrator' : 'Traffic enforcer',
+                  status: user.status === 'ACTIVE' ? 'Active' : 'Disabled',
+                  lastDate: lastLogin ? userDateFormatter.format(lastLogin) : 'Never',
+                  lastTime: lastLogin ? `${userTimeFormatter.format(lastLogin)} PHT` : '',
+                };
+              }));
+            }
+          })
+          .catch((error) => {
+            console.error(error);
+            if (isMounted) setErrorMessage(error.message || 'Could not load user accounts.');
+          })
+          .finally(() => {
+            if (isMounted) setIsLoading(false);
+          });
+        return () => { isMounted = false; };
+      }, []);
+
       return (
         <section className="panel">
           <div className="panel__header panel__header--center">
             <h2 className="panel__title">User accounts</h2>
-            <p className="panel__meta">Showing 1–{USERS.length} of {USERS.length} accounts</p>
+            <p className="panel__meta">
+              {isLoading ? 'Loading accounts…' : `${users.length} account${users.length === 1 ? '' : 's'}`}
+            </p>
           </div>
+
+          {errorMessage && (
+            <p className="form-message form-message--error" role="alert">{errorMessage}</p>
+          )}
 
           <div className="table-wrap">
             <table className="table">
@@ -385,7 +454,13 @@
                 </tr>
               </thead>
               <tbody>
-                {USERS.map((user) => (
+                {isLoading && (
+                  <tr><td colSpan="6">Loading user accounts…</td></tr>
+                )}
+                {!isLoading && !errorMessage && users.length === 0 && (
+                  <tr><td colSpan="6">No user accounts found.</td></tr>
+                )}
+                {users.map((user) => (
                   <tr key={user.id}>
                     <td>{user.name}</td>
                     <td>{user.username}</td>
@@ -452,6 +527,9 @@
         active: true,  // TODO: Translate rin from boolean true/false to either 'ACTIVE' or 'DISABLED' since yun yung enum na need ni database
       });
       const [showPassword, setShowPassword] = useState(false);
+      const [errorMessage, setErrorMessage] = useState('');
+      const [successMessage, setSuccessMessage] = useState('');
+      const [isSubmitting, setIsSubmitting] = useState(false);
       
       const handleChange = (event) => {
         const { name, type, value, checked } = event.target;
@@ -464,17 +542,16 @@
       // why do i even have to suffer writing api fetch calls :(
       const handleSubmit = async (event) => {
         event.preventDefault();
-        // BACKEND: ise send nyo yung values sa create user endpoint dito.
-        // BACKEND: Pag success i reset nyo yung form and i refresh yung USERS table. On failure show an error message (basic error handling lang yan).
+        setErrorMessage('');
+        setSuccessMessage('');
+        setIsSubmitting(true);
         try {
-          console.log(values);
-          const response = await fetch("/api/v1/users", {
+          const response = await window.smartLaneSession.authenticatedFetch('/api/v1/users/', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
             },
 
-            // TODO: Dagdagan lang ng frontend sanitation para malinis na agad yung input pag-fetch
             body: JSON.stringify({
               "full_name":  values.fullName,
               "email":      values.email,
@@ -485,17 +562,38 @@
               "status":     values.active ? "ACTIVE" : "DISABLED",
             })
           });
+          const result = await response.json();
           if (!response.ok) {
-            throw new Error(`Response status: ${response.status}`);
+            throw new Error(result.detail || `Could not create user (HTTP ${response.status}).`);
           }
+          setValues({
+            fullName: '',
+            email: '',
+            username: '',
+            role: 'ADMINISTRATOR',
+            password: '',
+            phone: '',
+            active: true,
+          });
+          setShowPassword(false);
+          setSuccessMessage('User account created successfully.');
+          window.setTimeout(() => window.location.reload(), 1000);
         } catch (error) {
-          console.error(error.message);
+          setErrorMessage(error.message || 'Could not create user account.');
+        } finally {
+          setIsSubmitting(false);
         }
       };
 
       return (
         <section className="panel">
           <h2 className="panel__title">Add user</h2>
+          {errorMessage && (
+            <p className="form-message form-message--error" role="alert">{errorMessage}</p>
+          )}
+          {successMessage && (
+            <p className="form-message form-message--success" role="status">{successMessage}</p>
+          )}
 
           <form className="stack-form" onSubmit={handleSubmit}>
             <div className="field">
@@ -600,14 +698,27 @@
               </label>
             </div>
 
-            {/* 
-              BACKEND: Yung Save user ay nag su submit ng form. Yung Cancel naman dapat i clear yung form (lagyan nyo ng onClick).
-            */}
             <div className="button-row">
-              <button type="submit" className="action-button action-button--green action-button--full">
-                Save user
+              <button type="submit" className="action-button action-button--green action-button--full" disabled={isSubmitting}>
+                {isSubmitting ? 'Saving…' : 'Save user'}
               </button>
-              <button type="button" className="action-button action-button--light action-button--full">
+              <button
+                type="button"
+                className="action-button action-button--light action-button--full"
+                onClick={() => {
+                  setValues({
+                    fullName: '',
+                    email: '',
+                    username: '',
+                    role: 'ADMINISTRATOR',
+                    password: '',
+                    phone: '',
+                    active: true,
+                  });
+                  setErrorMessage('');
+                  setSuccessMessage('');
+                }}
+              >
                 Cancel
               </button>
             </div>
