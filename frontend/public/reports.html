@@ -21,6 +21,7 @@
   <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
   <script src="/session.js"></script>
+  <script src="/clock.js"></script>
 
   <script type="text/babel">
 
@@ -310,6 +311,18 @@
 
 
     function Topbar() {
+      const [currentTime, setCurrentTime] = useState(
+        () => window.smartLaneClock.format(new Date()),
+      );
+
+      useEffect(() => {
+        const timer = window.setInterval(
+          () => setCurrentTime(window.smartLaneClock.format(new Date())),
+          1000,
+        );
+        return () => window.clearInterval(timer);
+      }, []);
+
       return (
         <header className="topbar">
           <h1 className="topbar__title">Reports</h1>
@@ -321,7 +334,7 @@
               Today
             </button>
 
-            <p className="topbar__time">14 Oct 2026 · 15:24:08 PHT</p>
+            <p className="topbar__time">{currentTime}</p>
 
             <p className="badge badge--online">
               <span className="badge__dot" />

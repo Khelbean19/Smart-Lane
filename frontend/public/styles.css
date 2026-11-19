@@ -1660,11 +1660,19 @@ body {
   margin-top: 16px;
   overflow: hidden;
   border-radius: 8px;
-  aspect-ratio: 2.1 / 1;
+  aspect-ratio: 16 / 9;
+}
+
+.camera__stream {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .camera__view--wide {
-  aspect-ratio: 2.8 / 1;
+  aspect-ratio: 16 / 9;
 }
 
 .camera__lane {
@@ -1713,6 +1721,57 @@ body {
   justify-content: space-between;
   gap: 12px;
   margin-top: 12px;
+}
+
+.camera__empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #e8edf2;
+  color: #64748b;
+  font-size: 13px;
+}
+
+.camera-slot__label {
+  display: block;
+  margin-top: 14px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.camera-slot__select {
+  display: block;
+  width: 100%;
+  margin-top: 6px;
+  padding: 9px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #fff;
+  color: #1e293b;
+  font: inherit;
+}
+
+.camera-slot__actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 14px;
+}
+
+.camera-slot__actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.camera__message {
+  margin: 0 0 12px;
+  color: #475569;
+  font-size: 13px;
+}
+
+.camera__message--error {
+  color: #b42318;
 }
 
 .detect-box {

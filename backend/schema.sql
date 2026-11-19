@@ -12,7 +12,7 @@
 -- ---------------------------------------------------------------------
 -- DROP TABLE IF EXISTS report_exports, audit_logs, system_settings,
 --     override_logs, emergency_events, alert_logs, signal_logs,
---     pairing_rules, detection_events, cameras, vehicle_classes,
+--     camera_assignments, pairing_rules, detection_events, cameras, vehicle_classes,
 --     road_ends, users CASCADE;
 -- DROP TYPE IF EXISTS user_role, user_status, camera_status, signal_mode,
 --     override_action, alert_status, setting_value_type, audit_action CASCADE;
@@ -70,6 +70,16 @@ CREATE TABLE cameras (
     last_frame_at  TIMESTAMP                            -- for fault check
 );
 COMMENT ON TABLE cameras IS 'All registered cameras in the system network (dedicated table for future scalability).';
+
+CREATE TABLE camera_assignments (
+    road_end_id  INTEGER   PRIMARY KEY
+                 REFERENCES road_ends (road_end_id) ON DELETE CASCADE,
+    camera_id    INTEGER   NOT NULL UNIQUE
+                 REFERENCES cameras (camera_id) ON DELETE RESTRICT,
+    updated_by   UUID      REFERENCES users (user_id),
+    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+COMMENT ON TABLE camera_assignments IS 'Desired camera selection for each live camera slot; camera status separately records runtime health.';
 
 -- Table 4. VehicleClasses ---------------------------------------------
 CREATE TABLE vehicle_classes (

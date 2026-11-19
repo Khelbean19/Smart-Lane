@@ -6,7 +6,7 @@ from typing import Annotated, Any
 import psycopg2
 from loguru import logger
 from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 
 from . import database
@@ -20,7 +20,18 @@ from .core.security import (
     verify_password,
 )
 from .models import UserIn, UserAuth
+from .schemas.camera import ApplyCameraAssignments
 from .schemas.user import UserProfile
+from .services.camera_repository import (
+    CameraDatabaseUnavailable,
+    CameraRepository,
+    InvalidCameraAssignment,
+)
+from .services.vision_worker_client import (
+    VisionWorkerClient,
+    VisionWorkerConfigurationError,
+    VisionWorkerError,
+)
 from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
 
@@ -336,3 +347,201 @@ async def get_users(_: Annotated[dict[str, Any], Depends(get_admin_user)]):
         return {"data": data}
     else:
         raise HTTPException(status_code=503, detail="Database unavailable.")
+
+
+def get_vision_worker_client() -> VisionWorkerClient:
+    try:
+        return VisionWorkerClient()
+    except VisionWorkerConfigurationError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+def get_camera_repository() -> CameraRepository:
+    return CameraRepository(connection, cursor, database_lock)
+
+
+async def reconcile_camera_state(
+    repository: CameraRepository,
+    client: VisionWorkerClient,
+    cameras: list[dict[str, Any]],
+    slots: list[dict[str, Any]],
+    *,
+    retry_failed: bool,
+) -> tuple[dict[int, str], str | None, list[dict[str, Any]]]:
+    active_camera_ids = [
+        slot["camera_id"] for slot in slots if slot["camera_id"] is not None
+    ]
+    try:
+        worker_cameras = await client.request_json(
+            "PUT",
+            "/api/v1/cameras/reconcile",
+            {
+                "cameras": [
+                    {
+                        "camera_id": camera["camera_id"],
+                        "source": str(camera["source"]),
+                    }
+                    for camera in cameras
+                ],
+                "active_camera_ids": active_camera_ids,
+                "retry_failed": retry_failed,
+            },
+        )
+    except VisionWorkerError as error:
+        statuses = {
+            camera["camera_id"]: (
+                "FAULT" if camera["camera_id"] in active_camera_ids else "OFFLINE"
+            )
+            for camera in cameras
+        }
+        repository.update_statuses(statuses)
+        return statuses, str(error), []
+
+    states_by_id = {
+        camera["camera_id"]: camera
+        for camera in worker_cameras
+    }
+    statuses: dict[int, str] = {}
+    activation_errors: list[dict[str, Any]] = []
+    for camera in cameras:
+        camera_id = camera["camera_id"]
+        worker_camera = states_by_id.get(camera_id)
+        if worker_camera is not None and worker_camera["state"] == "error":
+            statuses[camera_id] = "FAULT"
+            if camera_id in active_camera_ids:
+                activation_errors.append(
+                    {
+                        "camera_id": camera_id,
+                        "error": worker_camera.get("error")
+                        or "Camera failed to activate.",
+                    }
+                )
+        elif camera_id in active_camera_ids:
+            if worker_camera is not None and worker_camera["state"] == "running":
+                statuses[camera_id] = "ONLINE"
+            else:
+                statuses[camera_id] = "FAULT"
+                activation_errors.append(
+                    {
+                        "camera_id": camera_id,
+                        "error": "Camera was not reported as running by the worker.",
+                    }
+                )
+        else:
+            statuses[camera_id] = "OFFLINE"
+
+    repository.update_statuses(statuses)
+    return statuses, None, activation_errors
+
+
+def build_camera_slots_response(
+    cameras: list[dict[str, Any]],
+    slots: list[dict[str, Any]],
+    role: str,
+    worker_error: str | None,
+    activation_errors: list[dict[str, Any]],
+) -> dict[str, Any]:
+    is_admin = role == "ADMINISTRATOR"
+    response_slots = []
+    for slot in slots:
+        response_slot = {
+            "slot_id": slot["slot_id"],
+            "region": slot["region"],
+            "camera_id": slot["camera_id"],
+            "camera_name": slot["camera_name"],
+            "status": slot["status"] or "OFFLINE",
+        }
+        if is_admin:
+            response_slot["source"] = slot["source"]
+        response_slots.append(response_slot)
+
+    response_cameras = []
+    if is_admin:
+        for camera in cameras:
+            response_cameras.append(
+                {
+                    "camera_id": camera["camera_id"],
+                    "camera_name": camera["camera_name"],
+                    "region": camera["region"],
+                    "status": camera["status"],
+                    "source": camera["source"],
+                }
+            )
+
+    return {
+        "slots": response_slots,
+        "cameras": response_cameras,
+        "worker_available": worker_error is None,
+        "worker_error": worker_error if is_admin else None,
+        "activation_errors": activation_errors if is_admin else [],
+    }
+
+
+@app.get("/api/v1/vision/camera-slots")
+async def get_vision_camera_slots(
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+    repository: Annotated[CameraRepository, Depends(get_camera_repository)],
+    client: Annotated[VisionWorkerClient, Depends(get_vision_worker_client)],
+) -> dict[str, Any]:
+    try:
+        cameras, slots = repository.read_state()
+        _, worker_error, activation_errors = await reconcile_camera_state(
+            repository,
+            client,
+            cameras,
+            slots,
+            retry_failed=False,
+        )
+        cameras, slots = repository.read_state()
+    except CameraDatabaseUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    return build_camera_slots_response(
+        cameras,
+        slots,
+        current_user["role"],
+        worker_error,
+        activation_errors,
+    )
+
+
+@app.put("/api/v1/vision/camera-slots")
+async def update_vision_camera_slots(
+    update: ApplyCameraAssignments,
+    current_user: Annotated[dict[str, Any], Depends(get_admin_user)],
+    repository: Annotated[CameraRepository, Depends(get_camera_repository)],
+    client: Annotated[VisionWorkerClient, Depends(get_vision_worker_client)],
+) -> JSONResponse:
+    assignments = [assignment.model_dump() for assignment in update.assignments]
+    try:
+        repository.replace_assignments(assignments, current_user["user_id"])
+        cameras, slots = repository.read_state()
+    except CameraDatabaseUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except InvalidCameraAssignment as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+    try:
+        _, worker_error, activation_errors = await reconcile_camera_state(
+            repository,
+            client,
+            cameras,
+            slots,
+            retry_failed=True,
+        )
+        cameras, slots = repository.read_state()
+    except CameraDatabaseUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    payload = build_camera_slots_response(
+        cameras,
+        slots,
+        current_user["role"],
+        worker_error,
+        activation_errors,
+    )
+    payload["assignments_saved"] = True
+    payload["pending_reconciliation"] = worker_error is not None
+    return JSONResponse(
+        status_code=202 if worker_error is not None else 200,
+        content=payload,
+    )

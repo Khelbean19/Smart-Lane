@@ -21,6 +21,7 @@
   <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
   <script src="/session.js"></script>
+  <script src="/clock.js"></script>
 
   <script type="text/babel">
 
@@ -54,19 +55,13 @@
       saved: true,
       vertices: 4,
       coverage: '21%',
-      tag: 'Camera B / South · Simulated preview',
-      stamp: 'CAM B / 2026-10-14 15:24:08',
-      size: '1280 × 720 · 24 fps',
       area: { left: 33, top: 28, width: 33, height: 62 },
-      boxes: [
-        { id: 1, type: '4w', label: '4W · car · 98.4%', left: 38, top: 34, width: 9, height: 32 },
-        { id: 2, type: '2w', label: '2W · motorcycle · 95.2%', left: 54, top: 58, width: 6, height: 24 },
-      ],
     };
 
     // BACKEND: CAMERA_OPTIONS and ALERT_CHANNELS - eto yung laman ng dropdowns. Pwede nyong dagdagan or bawasan.
     const CAMERA_OPTIONS = ['Camera A · North', 'Camera B · South'];
     const ALERT_CHANNELS = ['Telegram bot', 'SMS', 'Email'];
+    const VISION_WORKER_URL = 'http://127.0.0.1:8001';
 
     const { useEffect, useState } = React;
 
@@ -333,6 +328,18 @@
 
 
     function Topbar() {
+      const [currentTime, setCurrentTime] = useState(
+        () => window.smartLaneClock.format(new Date()),
+      );
+
+      useEffect(() => {
+        const timer = window.setInterval(
+          () => setCurrentTime(window.smartLaneClock.format(new Date())),
+          1000,
+        );
+        return () => window.clearInterval(timer);
+      }, []);
+
       return (
         <header className="topbar">
           <h1 className="topbar__title">Settings</h1>
@@ -344,7 +351,7 @@
               Today
             </button>
 
-            <p className="topbar__time">14 Oct 2026 · 15:24:08 PHT</p>
+            <p className="topbar__time">{currentTime}</p>
 
             <p className="badge badge--online">
               <span className="badge__dot" />
@@ -379,7 +386,9 @@
     }
 
 
-    function ZonePanel({ values, onChange }) {
+    function ZonePanel({ values, onChange, onSelectCamera }) {
+      const cameraSourceIndex = values.camera === CAMERA_OPTIONS[0] ? 0 : 1;
+
       return (
         <section className="panel">
           <div className="panel__header panel__header--center">
@@ -408,22 +417,23 @@
               </select>
             </div>
 
-            {/* BACKEND: Lagyan nyo ng onClick yung Preview A. Dapat ipakita nya yung preview ng kabilang camera. */}
-            <button type="button" className="action-button action-button--light">
+            <button
+              type="button"
+              className="action-button action-button--light"
+              onClick={() => onSelectCamera(CAMERA_OPTIONS[0])}
+            >
               <CameraIcon />
               Preview A
             </button>
           </div>
 
-          {/* 
-            BACKEND: Dito yung camera preview. Pwede nyong palitan ng <video> or <img> stream. 
-            Yung zone-box ay yung detection zone (ZONE.area), pag nag Draw zone dapat mag update to.
-          */}
           <div className="camera__view camera__view--wide">
-            <span className="camera__lane camera__lane--left" />
-            <span className="camera__lane camera__lane--center" />
-            <span className="camera__lane camera__lane--right" />
-            <span className="camera__tag">{ZONE.tag}</span>
+            <img
+              className="camera__stream"
+              src={`${VISION_WORKER_URL}/camera/${cameraSourceIndex}/stream`}
+              alt={`Live feed for ${values.camera}`}
+            />
+            <span className="camera__tag">{values.camera} · Source {cameraSourceIndex}</span>
 
             <span
               className="zone-box"
@@ -441,24 +451,6 @@
               <span className="zone-box__handle zone-box__handle--br" />
             </span>
 
-            {ZONE.boxes.map((box) => (
-              <span
-                key={box.id}
-                className={`detect-box detect-box--${box.type}`}
-                style={{
-                  left: `${box.left}%`,
-                  top: `${box.top}%`,
-                  width: `${box.width}%`,
-                  height: `${box.height}%`,
-                }}
-              >
-                <span className="detect-box__vehicle" />
-                <span className="detect-box__label">{box.label}</span>
-              </span>
-            ))}
-
-            <span className="camera__stamp">{ZONE.stamp}</span>
-            <span className="camera__size">{ZONE.size}</span>
           </div>
 
           {/* BACKEND: Lagyan nyo ng onClick yung Draw zone and Clear zone. Yung ZONE.coverage ay percent ng preview na sakop ng zone. */}
@@ -724,6 +716,10 @@
         setPairing(PAIRING);
       };
 
+      const handleSelectCamera = (camera) => {
+        setValues((prev) => ({ ...prev, camera }));
+      };
+
       return (
         <div className="page page--dashboard">
           <Sidebar />
@@ -732,7 +728,11 @@
             <div className="content">
               <SettingsToolbar onReset={handleReset} />
               <div className="split split--left">
-                <ZonePanel values={values} onChange={handleChange} />
+                <ZonePanel
+                  values={values}
+                  onChange={handleChange}
+                  onSelectCamera={handleSelectCamera}
+                />
                 <TimingPanel values={values} onChange={handleChange} />
               </div>
               <div className="split split--right">
