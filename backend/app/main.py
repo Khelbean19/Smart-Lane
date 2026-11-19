@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from threading import RLock
 from typing import Annotated, Any
 
 import psycopg2
@@ -34,12 +35,19 @@ FRONTEND_PUBLIC_DIR = Path(__file__).resolve().parents[2] / "frontend" / "public
 # OAuth2 clients obtain bearer tokens from this form-encoded endpoint.
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
 cursor = None
+database_lock = RLock()
 
 if connection:
     cursor = connection.cursor(cursor_factory=RealDictCursor)
 
 # directory is relative to project root
 app.frontend("/", directory=FRONTEND_PUBLIC_DIR, fallback="404.html")
+
+
+@app.get("/login", include_in_schema=False)
+async def login_page() -> FileResponse:
+    """Serve the login page."""
+    return FileResponse(FRONTEND_PUBLIC_DIR / "index.html")
 
 
 @app.get("/dashboard", include_in_schema=False)
@@ -99,12 +107,13 @@ def authenticate_user(
     if not connection or not cursor:
         raise HTTPException(status_code=503, detail="Database unavailable.")
 
-    cursor.execute(
-        "SELECT user_id, password_hash, role, status FROM users "
-        "WHERE username=%s OR email=%s LIMIT 1",
-        (username, username),
-    )
-    user = cursor.fetchone()
+    with database_lock:
+        cursor.execute(
+            "SELECT user_id, password_hash, role, status FROM users "
+            "WHERE username=%s OR email=%s LIMIT 1",
+            (username, username),
+        )
+        user = cursor.fetchone()
     invalid_credentials = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Account credentials are incorrect or the requested account is inactive.",
@@ -118,11 +127,13 @@ def authenticate_user(
         raise invalid_credentials
 
     if password_hash_needs_upgrade(user["password_hash"]):
-        cursor.execute(
-            "UPDATE users SET password_hash=%s WHERE user_id=%s",
-            (hash_password(password), user["user_id"]),
-        )
-        connection.commit()
+        upgraded_hash = hash_password(password)
+        with database_lock:
+            cursor.execute(
+                "UPDATE users SET password_hash=%s WHERE user_id=%s",
+                (upgraded_hash, user["user_id"]),
+            )
+            connection.commit()
 
     expires_in = (
         REMEMBER_ACCESS_TOKEN_TTL_SECONDS if remember_me else ACCESS_TOKEN_TTL_SECONDS
@@ -215,13 +226,14 @@ def get_current_user(token: Annotated[str, Depends(oauth2_scheme)]) -> dict[str,
     if not connection or not cursor:
         raise HTTPException(status_code=503, detail="Database unavailable.")
 
-    cursor.execute(
-        "SELECT user_id, full_name, username, email, phone, role, status, "
-        "last_login, created_at, updated_at "
-        "FROM users WHERE user_id=%s",
-        (user_id,),
-    )
-    user = cursor.fetchone()
+    with database_lock:
+        cursor.execute(
+            "SELECT user_id, full_name, username, email, phone, role, status, "
+            "last_login, created_at, updated_at "
+            "FROM users WHERE user_id=%s",
+            (user_id,),
+        )
+        user = cursor.fetchone()
     if not user or user["status"] != "ACTIVE":
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -278,23 +290,28 @@ async def create_user(
     without its administrator dependency.
     """
     if connection and cursor:
+        password_hash = hash_password(user.password)
         try:
-            cursor.execute("INSERT INTO users " \
-                           "(full_name, username, email, phone, password_hash, role, status) " \
-                           "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                           (user.full_name,
-                            user.username,
-                            "null" if user.email is None else user.email,
-                            user.phone,
-                            hash_password(user.password),
-                            user.role,
-                            user.status))
-            connection.commit()
+            with database_lock:
+                try:
+                    cursor.execute("INSERT INTO users " \
+                                   "(full_name, username, email, phone, password_hash, role, status) " \
+                                   "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                                   (user.full_name,
+                                    user.username,
+                                    "null" if user.email is None else user.email,
+                                    user.phone,
+                                    password_hash,
+                                    user.role,
+                                    user.status))
+                    connection.commit()
+                except psycopg2.errors.UniqueViolation:
+                    connection.rollback()
+                    raise
             return {
                 "message": "User created successfully"
             }
         except psycopg2.errors.UniqueViolation:
-            connection.rollback()
             raise HTTPException(400, "An account with the same username, email, or phone number already exists.")
     else:
         raise HTTPException(500)
@@ -311,10 +328,11 @@ async def get_users(_: Annotated[dict[str, Any], Depends(get_admin_user)]):
     bearer token itself is never returned in the response.
     """
     if connection and cursor:  # db connection is open
-        cursor.execute("SELECT " \
-                       "user_id, full_name, username, email, phone, role, status, last_login, created_at, updated_at " \
-                       "FROM users LIMIT 10")
-        data = cursor.fetchall()
+        with database_lock:
+            cursor.execute("SELECT " \
+                           "user_id, full_name, username, email, phone, role, status, last_login, created_at, updated_at " \
+                           "FROM users LIMIT 10")
+            data = cursor.fetchall()
         return {"data": data}
     else:
         raise HTTPException(status_code=503, detail="Database unavailable.")
