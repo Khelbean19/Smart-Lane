@@ -164,6 +164,27 @@ p {
   margin-top: 18px;
 }
 
+.form-message {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.form-message--error {
+  border-color: #fecaca;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.form-message--success {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+  color: #166534;
+}
+
 .login-card__help {
   margin-top: 24px;
   padding-top: 18px;

@@ -34,6 +34,7 @@ docker run --name postgres -d \
     -v postgres-data:/var/lib/postgresql \
     -v "$PWD/postgres-password.txt:/run/secrets/postgres-password:ro" \
     -e POSTGRES_PASSWORD_FILE=/run/secrets/postgres-password \
+    -e POSTGRES_DB=smartlane-db
     postgres:18
 ```
 
@@ -42,7 +43,7 @@ desired port number that is available. For example: `-p 127.0.0.1:5433:5432` whi
 to expose the postgres database in the container.
 
 #### Connecting to pgAdmin
-This is applicable if pgAdmin 4 is installed as an application to the computer. Use the following
+This is applicable if pgAdmin 4 is installed as an application in your computer. Use the following
 connection settings when adding a new server connection:
 - Host name/address: `localhost` or `127.0.0.1` (However, it is recommended to directly use
 `127.0.0.1` for the address as it provides faster connection to the postgres server)
@@ -51,17 +52,52 @@ connection settings when adding a new server connection:
 
 
 ### Backend
+Run the following commands to initialize the local project repository.
 ```bash
-cd backend
-python -m venv venv
-venv\Scripts\activate        # Windows  (Linux/Mac: source venv/bin/activate)
-pip install -r requirements.txt
-cp ../.env.example ../.env   # then fill in the values
-uvicorn app.main:app --reload
+uv venv .venv --python 3.15     # Creates a virtual environment at Python version 3.15
+.venv\Scripts\activate          # Activate the virtual environment
+uv sync                         # Downloads and installs project dependencies (similar to pip install)
 ```
 
+Before running the project, you will need to create an environment file with the following fields.
+Name the file to something like `.env.dev`.
+- POSTGRES_USERNAME - The default is `postgres`
+- POSTGRES_PASSWORD - Use the password set in `postgres-password.txt`
+- POSTGRES_DB - The name of the local database (e.g., `smartlane-db`)
+- POSTGRES_HOST - Use `localhost` for local development
+- POSTGRES_PORT - The port number exposed from the `docker run` command
+- AUTH_SECRET_KEY - A private signing key for API bearer tokens. Generate one with
+  `python -c "import secrets; print(secrets.token_urlsafe(32))"` and keep it out of source control.
+
+The environment file should look like:
+```
+POSTGRES_USERNAME=postgres
+POSTGRES_PASSWORD=mypassword123!
+POSTGRES_DB=smartlane-db
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+AUTH_SECRET_KEY=replace-with-a-random-secret
+```
+
+The values of these variables should point to your database configuration that were used during the
+PostgreSQL database setup.
+
+Use `uv run --env-file .env.dev fastapi dev` to run the backend server with the injected environment
+variables. Omitting the environment file will likely cause the project to fail when it attempts to
+connect to the postgres database.
+
+The OAuth2 token endpoint is `POST /api/v1/auth/token` and accepts form fields `username` and
+`password`. Send its `access_token` as `Authorization: Bearer <token>` when calling
+`/api/v1/users/`. Both user-listing and user-creation operations require an active
+`ADMINISTRATOR` account; provision the first administrator directly in the database.
+The web login keeps an unchecked sign-in in the current browser session (15-minute token). With
+**Remember me** checked, the browser persists the sign-in across restarts, but the signed token
+expires after seven days and the client returns to the login page when it expires.
+
+
 ### Frontend
-Folder structure only for now. The frontend dev will set up the React (Vite) app inside `frontend/`.
+FastAPI serves the static React/Babel pages from `frontend/public/`. Shared authentication behavior
+is in `session.js`, and `clock.js` formats live timestamps in Philippine Time.
 
 ### Tests
 ```bash

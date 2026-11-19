@@ -1,7 +1,7 @@
 -- =====================================================================
 -- SmartLane (Vision Vanguard) - PostgreSQL schema
 -- Laboratory #9: Software Design Modeling
--- Target: PostgreSQL 13+ (uses built-in gen_random_uuid()), pgAdmin 4
+-- Target: PostgreSQL 18 (uses built-in gen_random_uuid()), pgAdmin 4
 --
 -- How to run: create/select an empty database, open Query Tool,
 -- paste or open this file, then press F5 (Execute).
