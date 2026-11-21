@@ -21,12 +21,15 @@ from .core.security import (
 )
 from .models import UserIn, UserAuth
 from .schemas.camera import ApplyCameraAssignments
+from .schemas.vision import CameraPreprocessingSettingsUpdate
 from .schemas.user import UserProfile
 from .services.camera_repository import (
     CameraDatabaseUnavailable,
     CameraRepository,
     InvalidCameraAssignment,
+    InvalidCameraSettings,
 )
+from .vision.pipeline import get_global_frame_cap, validate_preprocessing_settings
 from .services.vision_worker_client import (
     VisionWorkerClient,
     VisionWorkerConfigurationError,
@@ -367,7 +370,7 @@ async def reconcile_camera_state(
     slots: list[dict[str, Any]],
     *,
     retry_failed: bool,
-) -> tuple[dict[int, str], str | None, list[dict[str, Any]]]:
+) -> tuple[dict[int, str], str | None, list[dict[str, Any]], list[dict[str, Any]]]:
     active_camera_ids = [
         slot["camera_id"] for slot in slots if slot["camera_id"] is not None
     ]
@@ -380,6 +383,16 @@ async def reconcile_camera_state(
                     {
                         "camera_id": camera["camera_id"],
                         "source": str(camera["source"]),
+                        "detection_width": camera.get("detection_width", 640),
+                        "detection_height": camera.get("detection_height", 480),
+                        "preprocessing_mode": camera.get(
+                            "preprocessing_mode",
+                            "fit",
+                        ),
+                        "roi_x": camera.get("roi_x", 0.0),
+                        "roi_y": camera.get("roi_y", 0.0),
+                        "roi_width": camera.get("roi_width", 1.0),
+                        "roi_height": camera.get("roi_height", 1.0),
                     }
                     for camera in cameras
                 ],
@@ -395,7 +408,7 @@ async def reconcile_camera_state(
             for camera in cameras
         }
         repository.update_statuses(statuses)
-        return statuses, str(error), []
+        return statuses, str(error), [], []
 
     states_by_id = {
         camera["camera_id"]: camera
@@ -431,7 +444,7 @@ async def reconcile_camera_state(
             statuses[camera_id] = "OFFLINE"
 
     repository.update_statuses(statuses)
-    return statuses, None, activation_errors
+    return statuses, None, activation_errors, worker_cameras
 
 
 def build_camera_slots_response(
@@ -440,8 +453,13 @@ def build_camera_slots_response(
     role: str,
     worker_error: str | None,
     activation_errors: list[dict[str, Any]],
+    worker_cameras: list[dict[str, Any]],
+    global_max_resolution: dict[str, int],
 ) -> dict[str, Any]:
     is_admin = role == "ADMINISTRATOR"
+    worker_cameras_by_id = {
+        camera["camera_id"]: camera for camera in worker_cameras
+    }
     response_slots = []
     for slot in slots:
         response_slot = {
@@ -453,6 +471,28 @@ def build_camera_slots_response(
         }
         if is_admin:
             response_slot["source"] = slot["source"]
+            worker_camera = worker_cameras_by_id.get(slot["camera_id"])
+            response_slot["source_resolution"] = (
+                worker_camera.get("source_resolution") if worker_camera else None
+            )
+            response_slot["preview_resolution"] = (
+                worker_camera.get("preview_resolution") if worker_camera else None
+            )
+            response_slot["max_frame_resolution"] = global_max_resolution
+            response_slot["detection_resolution"] = {
+                "width": slot.get("detection_width", 640),
+                "height": slot.get("detection_height", 480),
+            }
+            response_slot["preprocessing_mode"] = slot.get(
+                "preprocessing_mode",
+                "fit",
+            )
+            response_slot["roi"] = {
+                "x": slot.get("roi_x", 0.0),
+                "y": slot.get("roi_y", 0.0),
+                "width": slot.get("roi_width", 1.0),
+                "height": slot.get("roi_height", 1.0),
+            }
         response_slots.append(response_slot)
 
     response_cameras = []
@@ -465,12 +505,29 @@ def build_camera_slots_response(
                     "region": camera["region"],
                     "status": camera["status"],
                     "source": camera["source"],
+                    "detection_width": camera.get("detection_width", 640),
+                    "detection_height": camera.get("detection_height", 480),
+                    "preprocessing_mode": camera.get("preprocessing_mode", "fit"),
+                    "roi_x": camera.get("roi_x", 0.0),
+                    "roi_y": camera.get("roi_y", 0.0),
+                    "roi_width": camera.get("roi_width", 1.0),
+                    "roi_height": camera.get("roi_height", 1.0),
+                    "max_frame_resolution": global_max_resolution,
+                    "source_resolution": (
+                        worker_cameras_by_id.get(camera["camera_id"], {})
+                        .get("source_resolution")
+                    ),
+                    "preview_resolution": (
+                        worker_cameras_by_id.get(camera["camera_id"], {})
+                        .get("preview_resolution")
+                    ),
                 }
             )
 
     return {
         "slots": response_slots,
         "cameras": response_cameras,
+        "global_max_resolution": global_max_resolution if is_admin else None,
         "worker_available": worker_error is None,
         "worker_error": worker_error if is_admin else None,
         "activation_errors": activation_errors if is_admin else [],
@@ -485,7 +542,7 @@ async def get_vision_camera_slots(
 ) -> dict[str, Any]:
     try:
         cameras, slots = repository.read_state()
-        _, worker_error, activation_errors = await reconcile_camera_state(
+        _, worker_error, activation_errors, worker_cameras = await reconcile_camera_state(
             repository,
             client,
             cameras,
@@ -493,7 +550,10 @@ async def get_vision_camera_slots(
             retry_failed=False,
         )
         cameras, slots = repository.read_state()
+        global_width, global_height = get_global_frame_cap()
     except CameraDatabaseUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except RuntimeError as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     return build_camera_slots_response(
         cameras,
@@ -501,6 +561,8 @@ async def get_vision_camera_slots(
         current_user["role"],
         worker_error,
         activation_errors,
+        worker_cameras,
+        {"width": global_width, "height": global_height},
     )
 
 
@@ -521,7 +583,52 @@ async def update_vision_camera_slots(
         raise HTTPException(status_code=422, detail=str(error)) from error
 
     try:
-        _, worker_error, activation_errors = await reconcile_camera_state(
+        _, worker_error, activation_errors, worker_cameras = await reconcile_camera_state(
+            repository,
+            client,
+            cameras,
+            slots,
+            retry_failed=True,
+        )
+        cameras, slots = repository.read_state()
+        global_width, global_height = get_global_frame_cap()
+    except CameraDatabaseUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+    payload = build_camera_slots_response(
+        cameras,
+        slots,
+        current_user["role"],
+        worker_error,
+        activation_errors,
+        worker_cameras,
+        {"width": global_width, "height": global_height},
+    )
+    payload["assignments_saved"] = True
+    payload["pending_reconciliation"] = worker_error is not None
+    return JSONResponse(
+        status_code=202 if worker_error is not None else 200,
+        content=payload,
+    )
+
+
+@app.put("/api/v1/vision/cameras/{camera_id}/settings")
+async def update_camera_preprocessing_settings(
+    camera_id: int,
+    update: CameraPreprocessingSettingsUpdate,
+    current_user: Annotated[dict[str, Any], Depends(get_admin_user)],
+    repository: Annotated[CameraRepository, Depends(get_camera_repository)],
+    client: Annotated[VisionWorkerClient, Depends(get_vision_worker_client)],
+) -> JSONResponse:
+    settings = update.model_dump()
+    try:
+        max_width, max_height = get_global_frame_cap()
+        validate_preprocessing_settings(settings, max_width, max_height)
+        repository.update_camera_preprocessing(camera_id, settings)
+        cameras, slots = repository.read_state()
+        _, worker_error, activation_errors, worker_cameras = await reconcile_camera_state(
             repository,
             client,
             cameras,
@@ -531,6 +638,10 @@ async def update_vision_camera_slots(
         cameras, slots = repository.read_state()
     except CameraDatabaseUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
     payload = build_camera_slots_response(
         cameras,
@@ -538,8 +649,17 @@ async def update_vision_camera_slots(
         current_user["role"],
         worker_error,
         activation_errors,
+        worker_cameras,
+        {"width": max_width, "height": max_height},
     )
-    payload["assignments_saved"] = True
+    camera = next(
+        (item for item in payload["cameras"] if item["camera_id"] == camera_id),
+        None,
+    )
+    if camera is None:
+        raise HTTPException(status_code=404, detail=f"Unknown camera ID {camera_id}.")
+    payload["camera"] = camera
+    payload["settings_saved"] = True
     payload["pending_reconciliation"] = worker_error is not None
     return JSONResponse(
         status_code=202 if worker_error is not None else 200,

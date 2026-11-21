@@ -15,6 +15,9 @@ class CameraDatabaseUnavailable(RuntimeError):
 class InvalidCameraAssignment(ValueError):
     """Raised when a requested slot assignment does not match the database."""
 
+class InvalidCameraSettings(ValueError):
+    """Raised when camera preprocessing settings target an unknown camera."""
+
 
 class CameraRepository:
     def __init__(
@@ -34,7 +37,10 @@ class CameraRepository:
                 self._cursor.execute(
                     "SELECT cameras.camera_id, cameras.camera_name, "
                     "cameras.road_end_id, road_ends.label AS region, "
-                    "cameras.source, cameras.status "
+                    "cameras.source, cameras.status, "
+                    "cameras.detection_width, cameras.detection_height, "
+                    "cameras.preprocessing_mode, cameras.roi_x, cameras.roi_y, "
+                    "cameras.roi_width, cameras.roi_height "
                     "FROM cameras "
                     "JOIN road_ends ON road_ends.road_end_id = cameras.road_end_id "
                     "ORDER BY cameras.camera_id"
@@ -43,7 +49,10 @@ class CameraRepository:
                 self._cursor.execute(
                     "SELECT road_ends.road_end_id AS slot_id, "
                     "road_ends.label AS region, cameras.camera_id, "
-                    "cameras.camera_name, cameras.source, cameras.status "
+                    "cameras.camera_name, cameras.source, cameras.status, "
+                    "cameras.detection_width, cameras.detection_height, "
+                    "cameras.preprocessing_mode, cameras.roi_x, cameras.roi_y, "
+                    "cameras.roi_width, cameras.roi_height "
                     "FROM road_ends "
                     "LEFT JOIN camera_assignments "
                     "ON camera_assignments.road_end_id = road_ends.road_end_id "
@@ -57,6 +66,42 @@ class CameraRepository:
                 self._connection.rollback()
                 raise
         return cameras, slots
+
+    def update_camera_preprocessing(
+        self,
+        camera_id: int,
+        settings: dict[str, Any],
+    ) -> None:
+        self._require_connection()
+        with self._database_lock:
+            try:
+                self._cursor.execute(
+                    "UPDATE cameras SET detection_width = %s, "
+                    "detection_height = %s, preprocessing_mode = %s, "
+                    "roi_x = %s, roi_y = %s, roi_width = %s, roi_height = %s "
+                    "WHERE camera_id = %s",
+                    (
+                        settings["detection_width"],
+                        settings["detection_height"],
+                        settings["preprocessing_mode"],
+                        settings["roi_x"],
+                        settings["roi_y"],
+                        settings["roi_width"],
+                        settings["roi_height"],
+                        camera_id,
+                    ),
+                )
+                if self._cursor.rowcount == 0:
+                    raise InvalidCameraSettings(
+                        f"Unknown camera ID {camera_id}."
+                    )
+                self._connection.commit()
+            except InvalidCameraSettings:
+                self._connection.rollback()
+                raise
+            except Exception:
+                self._connection.rollback()
+                raise
 
     def replace_assignments(
         self,

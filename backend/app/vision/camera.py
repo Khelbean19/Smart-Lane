@@ -9,6 +9,14 @@ from typing import Any, Callable
 
 import cv2
 
+from .pipeline import (
+    DEFAULT_PREPROCESSING_SETTINGS,
+    cap_frame,
+    get_global_frame_cap,
+    preprocess_detection_frame,
+    validate_preprocessing_settings,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +31,19 @@ class CameraConfig:
     height: int | None = None
     fps: float | None = None
     jpeg_quality: int = 80
+    detection_width: int = 640
+    detection_height: int = 480
+    preprocessing_mode: str = "fit"
+    roi_x: float = 0.0
+    roi_y: float = 0.0
+    roi_width: float = 1.0
+    roi_height: float = 1.0
+
+    def preprocessing_settings(self) -> dict[str, Any]:
+        return {
+            name: getattr(self, name)
+            for name in DEFAULT_PREPROCESSING_SETTINGS
+        }
 
 
 def normalize_source(source: str) -> int | str:
@@ -42,10 +63,18 @@ class CameraCapture:
         camera_id: int,
         source: int | str,
         capture_factory: Callable[[int | str], Any] | None = None,
+        max_frame_width: int | None = None,
+        max_frame_height: int | None = None,
     ) -> None:
         self.camera_id = camera_id
         self.source = source
         self._capture_factory = capture_factory or cv2.VideoCapture
+        if max_frame_width is None and max_frame_height is None:
+            max_frame_width, max_frame_height = get_global_frame_cap()
+        elif max_frame_width is None or max_frame_height is None:
+            raise ValueError("Both maximum frame dimensions must be provided together.")
+        self._max_frame_width = max_frame_width
+        self._max_frame_height = max_frame_height
         self._condition = Condition(RLock())
         self._operation_lock = RLock()
         self._thread: Thread | None = None
@@ -55,6 +84,9 @@ class CameraCapture:
         self._state = "stopped"
         self._error: str | None = None
         self._jpeg: bytes | None = None
+        self._detection_frame: Any | None = None
+        self._source_resolution: dict[str, int] | None = None
+        self._preview_resolution: dict[str, int] | None = None
         self._sequence = 0
 
     def start(self, timeout: float = 10.0) -> dict[str, Any]:
@@ -67,6 +99,9 @@ class CameraCapture:
                 self._stop_event = Event()
                 self._ready_event = Event()
                 self._jpeg = None
+                self._detection_frame = None
+                self._source_resolution = None
+                self._preview_resolution = None
                 self._sequence = 0
                 self._error = None
                 self._state = "starting"
@@ -119,12 +154,18 @@ class CameraCapture:
 
     def configure(self, updates: dict[str, Any]) -> dict[str, Any]:
         with self._operation_lock:
+            config = replace(self._config, **updates)
+            validate_preprocessing_settings(
+                config.preprocessing_settings(),
+                self._max_frame_width,
+                self._max_frame_height,
+            )
             was_running = self.status()["state"] == "running"
             if was_running:
                 self.stop()
 
             with self._condition:
-                self._config = replace(self._config, **updates)
+                self._config = config
                 self._error = None
 
             if was_running:
@@ -138,6 +179,12 @@ class CameraCapture:
                 "source": str(self.source),
                 "state": self._state,
                 "config": asdict(self._config),
+                "max_frame_resolution": {
+                    "width": self._max_frame_width,
+                    "height": self._max_frame_height,
+                },
+                "source_resolution": self._source_resolution,
+                "preview_resolution": self._preview_resolution,
                 "frame_sequence": self._sequence,
                 "error": self._error,
             }
@@ -151,6 +198,20 @@ class CameraCapture:
             if self._sequence <= after_sequence or self._jpeg is None:
                 return None
             return self._sequence, self._jpeg
+
+    def next_detection_frame(
+        self,
+        after_sequence: int,
+        timeout: float = 1.0,
+    ) -> tuple[int, Any] | None:
+        with self._condition:
+            self._condition.wait_for(
+                lambda: self._sequence > after_sequence or self._state != "running",
+                timeout=timeout,
+            )
+            if self._sequence <= after_sequence or self._detection_frame is None:
+                return None
+            return self._sequence, self._detection_frame.copy()
 
     def _capture_loop(self) -> None:
         capture = None
@@ -167,9 +228,19 @@ class CameraCapture:
                         break
                     raise CameraUnavailable(f"Camera source {self.source} failed to read a frame.")
 
+                source_height, source_width = frame.shape[:2]
+                capped_frame, _ = cap_frame(
+                    frame,
+                    self._max_frame_width,
+                    self._max_frame_height,
+                )
+                detection_frame = preprocess_detection_frame(
+                    capped_frame,
+                    self._config.preprocessing_settings(),
+                )
                 encoded, buffer = cv2.imencode(
                     ".jpg",
-                    frame,
+                    capped_frame,
                     [cv2.IMWRITE_JPEG_QUALITY, self._config.jpeg_quality],
                 )
                 if not encoded:
@@ -179,6 +250,16 @@ class CameraCapture:
                     if self._stop_event.is_set():
                         break
                     self._jpeg = buffer.tobytes()
+                    self._detection_frame = detection_frame
+                    self._source_resolution = {
+                        "width": source_width,
+                        "height": source_height,
+                    }
+                    preview_height, preview_width = capped_frame.shape[:2]
+                    self._preview_resolution = {
+                        "width": preview_width,
+                        "height": preview_height,
+                    }
                     self._sequence += 1
                     self._state = "running"
                     self._error = None
@@ -204,15 +285,26 @@ class CameraCapture:
                 self._condition.notify_all()
 
     def _apply_config(self, capture: Any) -> None:
+        requested_width = min(
+            self._config.width or self._max_frame_width,
+            self._max_frame_width,
+        )
+        requested_height = min(
+            self._config.height or self._max_frame_height,
+            self._max_frame_height,
+        )
         properties = (
-            (self._config.width, cv2.CAP_PROP_FRAME_WIDTH, "width"),
-            (self._config.height, cv2.CAP_PROP_FRAME_HEIGHT, "height"),
+            (requested_width, cv2.CAP_PROP_FRAME_WIDTH, "width"),
+            (requested_height, cv2.CAP_PROP_FRAME_HEIGHT, "height"),
             (self._config.fps, cv2.CAP_PROP_FPS, "frame rate"),
         )
         for value, property_id, name in properties:
             if value is not None and not capture.set(property_id, value):
-                raise CameraUnavailable(
-                    f"Camera source {self.source} rejected the requested {name}."
+                logger.warning(
+                    "Camera %s did not accept the requested %s; software frame "
+                    "capping will still be applied.",
+                    self.camera_id,
+                    name,
                 )
 
 
@@ -222,8 +314,16 @@ class CameraManager:
     def __init__(
         self,
         capture_factory: Callable[[int | str], Any] | None = None,
+        max_frame_width: int | None = None,
+        max_frame_height: int | None = None,
     ) -> None:
         self._capture_factory = capture_factory
+        if max_frame_width is None and max_frame_height is None:
+            max_frame_width, max_frame_height = get_global_frame_cap()
+        elif max_frame_width is None or max_frame_height is None:
+            raise ValueError("Both maximum frame dimensions must be provided together.")
+        self._max_frame_width = max_frame_width
+        self._max_frame_height = max_frame_height
         self._cameras: dict[int, CameraCapture] = {}
         self._active_camera_ids: set[int] = set()
         self._registry_lock = RLock()
@@ -234,29 +334,42 @@ class CameraManager:
         active_camera_ids: list[int],
         retry_failed: bool = False,
     ) -> list[dict[str, Any]]:
-        requested: dict[int, int | str] = {}
+        requested: dict[int, tuple[int | str, dict[str, Any]]] = {}
         for record in registry:
             camera_id = record["camera_id"]
             if camera_id in requested:
                 raise ValueError(f"Duplicate camera ID {camera_id} in registry.")
-            requested[camera_id] = normalize_source(record["source"])
+            settings = {
+                name: record.get(name, default)
+                for name, default in DEFAULT_PREPROCESSING_SETTINGS.items()
+            }
+            validate_preprocessing_settings(
+                settings,
+                self._max_frame_width,
+                self._max_frame_height,
+            )
+            requested[camera_id] = (normalize_source(record["source"]), settings)
 
         active = set(active_camera_ids)
         if len(active) != len(active_camera_ids):
             raise ValueError("A camera cannot be active more than once.")
         if not active.issubset(requested):
             raise ValueError("Active camera IDs must exist in the worker registry.")
-        active_sources = [requested[camera_id] for camera_id in active]
+        active_sources = [requested[camera_id][0] for camera_id in active]
         if len(set(active_sources)) != len(active_sources):
             raise ValueError("A camera source cannot be active more than once.")
 
         with self._registry_lock:
             previous_active = self._active_camera_ids
             changed_sources: set[int] = set()
+            changed_settings: set[int] = set()
             blocked_ids: set[int] = set()
 
             for camera_id, camera in list(self._cameras.items()):
-                if camera_id not in requested or camera.source != requested[camera_id]:
+                if (
+                    camera_id not in requested
+                    or camera.source != requested[camera_id][0]
+                ):
                     if camera.status()["state"] != "stopped":
                         try:
                             camera.stop()
@@ -272,6 +385,7 @@ class CameraManager:
                     changed_sources.add(camera_id)
 
             for camera_id, source in requested.items():
+                source = source[0]
                 if camera_id in blocked_ids:
                     continue
                 if camera_id not in self._cameras:
@@ -279,18 +393,36 @@ class CameraManager:
                         camera_id,
                         source,
                         self._capture_factory,
+                        self._max_frame_width,
+                        self._max_frame_height,
                     )
                     changed_sources.add(camera_id)
 
             for camera_id, camera in self._cameras.items():
                 if camera_id in blocked_ids:
                     continue
+                desired_settings = requested[camera_id][1]
+                current_settings = camera.status()["config"]
+                if any(
+                    current_settings.get(name) != value
+                    for name, value in desired_settings.items()
+                ):
+                    changed_settings.add(camera_id)
+                    try:
+                        camera.configure(desired_settings)
+                    except CameraUnavailable as error:
+                        logger.error(
+                            "Camera %s settings could not be applied: %s",
+                            camera_id,
+                            error,
+                        )
                 state = camera.status()["state"]
                 if camera_id in active:
                     should_retry = (
                         retry_failed
                         or camera_id not in previous_active
                         or camera_id in changed_sources
+                        or camera_id in changed_settings
                     )
                     if state == "running" or (state == "error" and not should_retry):
                         continue

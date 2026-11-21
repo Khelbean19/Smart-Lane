@@ -3,7 +3,7 @@
 Smart traffic light system with vehicle classification for single-lane, bi-directional roads.
 Team: Vision Vanguard (BSIT 3-3) | SDG 11 – Target 11.2
 
-**Stack:** React.js (Vite) · FastAPI · PostgreSQL + SQLAlchemy · OpenCV + YOLOv8 · WebSocket + MJPEG · SMS API
+**Stack:** React.js (Vite) · FastAPI · PostgreSQL + SQLAlchemy · OpenCV + Ultralytics YOLO (YOLO26n candidate) · WebSocket + MJPEG · SMS API
 
 ## Setup
 ### Database
@@ -71,6 +71,10 @@ Name the file to something like `.env.dev`.
 - VISION_WORKER_URL - The worker control API URL; keep it on loopback (`http://127.0.0.1:8001`)
 - VISION_WORKER_TOKEN - A private shared bearer token for worker control. Generate one with
   `python -c "import secrets; print(secrets.token_urlsafe(32))"` and keep it out of source control.
+- VISION_MAX_FRAME_WIDTH and VISION_MAX_FRAME_HEIGHT - deployment-level maximum dimensions for
+  frames produced by the worker. They default to `1280` and `720`; set both before deployment to
+  tune the system-wide cap for the machine and camera workload. Values must be positive whole
+  numbers and are limited to 7680x4320. These are not administrator-editable from the frontend.
 
 The environment file should look like:
 ```
@@ -82,6 +86,8 @@ POSTGRES_PORT=5432
 AUTH_SECRET_KEY=replace-with-a-random-secret
 VISION_WORKER_URL=http://127.0.0.1:8001
 VISION_WORKER_TOKEN=replace-with-another-random-secret
+VISION_MAX_FRAME_WIDTH=1280
+VISION_MAX_FRAME_HEIGHT=720
 ```
 
 The values of these variables should point to your database configuration that were used during the
@@ -91,10 +97,11 @@ Use `uv run --env-file .env.dev fastapi dev` to run the backend server with the 
 variables. Omitting the environment file will likely cause the project to fail when it attempts to
 connect to the postgres database.
 
-For an existing database, apply `backend/scripts/upgrade_camera_assignments.sql` once using the
-PostgreSQL Query Tool. New databases created from `backend/schema.sql` already include the
-`camera_assignments` table. Camera slots start unassigned; camera runtime health remains represented
-by the `camera_status` enum (`ONLINE`, `OFFLINE`, or `FAULT`).
+For an existing database, apply `backend/scripts/upgrade_camera_assignments.sql` and
+`backend/scripts/upgrade_camera_preprocessing.sql` using the PostgreSQL Query Tool. New databases
+created from `backend/schema.sql` already include these tables and camera preprocessing columns.
+Camera slots start unassigned; camera runtime health remains represented by the `camera_status`
+enum (`ONLINE`, `OFFLINE`, or `FAULT`).
 
 ### Standalone camera worker
 The camera worker is a separate process from FastAPI. It is the only process that opens camera
@@ -130,6 +137,23 @@ API. The worker validates the shared bearer token. Keep the token secret and con
 environment used by both processes. The worker's loopback binding is not a boundary against other
 web pages or processes running on the same machine. The frontend and camera worker must run on the
 same host because a browser's `127.0.0.1` refers to its own device.
+
+The worker requests the configured capture size where supported, then enforces the maximum on each
+decoded frame before JPEG encoding and MJPEG delivery. Source dimensions shown to administrators
+are measured from actual captured frames. Per-camera detection dimensions, `fit`/`crop` mode, and
+normalized crop ROI are stored on the camera record and edited in Settings; Live Control provides
+a direct Configure link and shows the global cap, measured source size, detection size, and mode.
+Both inference preprocessing modes preserve aspect ratio by letterboxing. The worker publishes a
+fixed-size latest detection frame for a future model adapter, but YOLO inference is not yet run by
+this iteration.
+
+Software resizing limits the worker's outgoing stream and inference input. It cannot reduce
+camera-to-worker network bandwidth or decode cost when an RTSP source continues to send its native
+high-resolution stream; configure a camera-side low-resolution substream for that case. Before
+choosing YOLO26 nano for CPU-only, dual-camera deployment, verify the installed Ultralytics version
+supports it and benchmark sustained accuracy, throughput, and latency against a supported nano
+baseline (such as YOLO11n) using representative traffic footage. OpenVINO or ONNX Runtime exports
+are additional CPU options to benchmark on supported hardware.
 
 The OAuth2 token endpoint is `POST /api/v1/auth/token` and accepts form fields `username` and
 `password`. Send its `access_token` as `Authorization: Bearer <token>` when calling

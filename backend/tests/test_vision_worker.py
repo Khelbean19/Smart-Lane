@@ -13,11 +13,12 @@ WORKER_TOKEN = "test-worker-token"
 
 
 class FakeCapture:
-    def __init__(self, source, opened=True):
+    def __init__(self, source, opened=True, shape=(8, 8)):
         self.source = source
         self.opened = opened
         self.released = False
         self.settings = {}
+        self.shape = shape
 
     def isOpened(self):
         return self.opened
@@ -31,7 +32,7 @@ class FakeCapture:
         if self.released:
             return False, None
         shade = int(self.source) * 80 if str(self.source).isdecimal() else 160
-        return True, np.full((8, 8, 3), shade, dtype=np.uint8)
+        return True, np.full((*self.shape, 3), shade, dtype=np.uint8)
 
     def release(self):
         self.released = True
@@ -113,6 +114,13 @@ def test_worker_reconciles_registered_cameras_and_streams_only_active(monkeypatc
             "height": 480,
             "fps": None,
             "jpeg_quality": 90,
+            "detection_width": 640,
+            "detection_height": 480,
+            "preprocessing_mode": "fit",
+            "roi_x": 0.0,
+            "roi_y": 0.0,
+            "roi_width": 1.0,
+            "roi_height": 1.0,
         }
 
         deactivated = client.put(
@@ -187,15 +195,82 @@ def test_camera_manager_construction_does_not_open_a_device(monkeypatch):
     assert manager.statuses() == []
 
 
+def test_worker_caps_stream_and_publishes_detection_sized_frames(monkeypatch):
+    monkeypatch.setenv("VISION_WORKER_TOKEN", WORKER_TOKEN)
+
+    def capture_factory(source):
+        return FakeCapture(source, shape=(480, 640))
+
+    manager = CameraManager(
+        capture_factory=capture_factory,
+        max_frame_width=320,
+        max_frame_height=240,
+    )
+    app = create_worker_app(manager)
+
+    with TestClient(app) as client:
+        response = client.put(
+            "/api/v1/cameras/reconcile",
+            headers=worker_headers(),
+            json={
+                "cameras": [
+                    {
+                        "camera_id": 9,
+                        "source": "0",
+                        "detection_width": 160,
+                        "detection_height": 120,
+                    }
+                ],
+                "active_camera_ids": [9],
+            },
+        )
+        assert response.status_code == 200
+        status = response.json()[0]
+        assert status["max_frame_resolution"] == {"width": 320, "height": 240}
+        assert status["source_resolution"] == {"width": 640, "height": 480}
+        assert status["config"]["detection_width"] == 160
+
+        encoded_frame = manager.get(9).next_frame(0, timeout=1)
+        detection_frame = manager.get(9).next_detection_frame(0, timeout=1)
+        assert encoded_frame is not None
+        assert detection_frame is not None
+        preview = cv2.imdecode(
+            np.frombuffer(encoded_frame[1], dtype=np.uint8),
+            cv2.IMREAD_COLOR,
+        )
+        assert preview.shape == (240, 320, 3)
+        assert detection_frame[1].shape == (120, 160, 3)
+
+
 def test_manager_does_not_replace_camera_when_old_capture_fails_to_stop(monkeypatch):
     instances = []
 
     class StopFailingCamera:
-        def __init__(self, camera_id, source, _capture_factory):
+        def __init__(
+            self,
+            camera_id,
+            source,
+            _capture_factory,
+            _max_frame_width,
+            _max_frame_height,
+        ):
             self.camera_id = camera_id
             self.source = source
             self.state = "stopped"
+            self.config = {
+                "detection_width": 640,
+                "detection_height": 480,
+                "preprocessing_mode": "fit",
+                "roi_x": 0.0,
+                "roi_y": 0.0,
+                "roi_width": 1.0,
+                "roi_height": 1.0,
+            }
             instances.append(self)
+
+        def configure(self, updates):
+            self.config.update(updates)
+            return self.status()
 
         def start(self):
             self.state = "running"
@@ -215,7 +290,10 @@ def test_manager_does_not_replace_camera_when_old_capture_fails_to_stop(monkeypa
                     "height": None,
                     "fps": None,
                     "jpeg_quality": 80,
+                    **self.config,
                 },
+                "max_frame_resolution": {"width": 1280, "height": 720},
+                "source_resolution": None,
                 "frame_sequence": 0,
                 "error": "capture thread is still running" if self.state == "error" else None,
             }

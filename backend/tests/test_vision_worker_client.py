@@ -126,6 +126,15 @@ class FakeCameraRepository:
         for camera in self.cameras:
             camera["status"] = "OFFLINE"
 
+    def update_camera_preprocessing(self, camera_id, settings):
+        camera = next(
+            (item for item in self.cameras if item["camera_id"] == camera_id),
+            None,
+        )
+        if camera is None:
+            raise ValueError(f"Unknown camera ID {camera_id}.")
+        camera.update(settings)
+
     def update_statuses(self, statuses):
         for camera in self.cameras:
             camera["status"] = statuses[camera["camera_id"]]
@@ -197,8 +206,28 @@ def test_admin_applies_full_unique_slot_assignment_and_worker_reconcile():
             "/api/v1/cameras/reconcile",
             {
                 "cameras": [
-                    {"camera_id": 1, "source": "0"},
-                    {"camera_id": 2, "source": "1"},
+                    {
+                        "camera_id": 1,
+                        "source": "0",
+                        "detection_width": 640,
+                        "detection_height": 480,
+                        "preprocessing_mode": "fit",
+                        "roi_x": 0.0,
+                        "roi_y": 0.0,
+                        "roi_width": 1.0,
+                        "roi_height": 1.0,
+                    },
+                    {
+                        "camera_id": 2,
+                        "source": "1",
+                        "detection_width": 640,
+                        "detection_height": 480,
+                        "preprocessing_mode": "fit",
+                        "roi_x": 0.0,
+                        "roi_y": 0.0,
+                        "roi_width": 1.0,
+                        "roi_height": 1.0,
+                    },
                 ],
                 "active_camera_ids": [2],
                 "retry_failed": True,
@@ -223,6 +252,7 @@ def test_enforcer_camera_slot_response_omits_all_camera_sources():
     body = response.json()
     assert "source" not in body["slots"][0]
     assert body["cameras"] == []
+    assert body["global_max_resolution"] is None
 
 
 def test_assignment_validation_rejects_duplicate_camera_and_incomplete_slots():
@@ -288,3 +318,92 @@ def test_backend_requires_authentication_for_camera_slots():
     response = TestClient(backend_main.app).get("/api/v1/vision/camera-slots")
 
     assert response.status_code == 401
+
+
+def test_admin_saves_camera_preprocessing_and_reconciles_worker(monkeypatch):
+    calls = []
+    repository = FakeCameraRepository()
+    user = {"role": "ADMINISTRATOR", "user_id": "admin-123"}
+    install_backend_overrides(repository, user, FakeWorkerClient(calls))
+    monkeypatch.setenv("VISION_MAX_FRAME_WIDTH", "320")
+    monkeypatch.setenv("VISION_MAX_FRAME_HEIGHT", "240")
+    try:
+        response = TestClient(backend_main.app).put(
+            "/api/v1/vision/cameras/1/settings",
+            json={
+                "detection_width": 320,
+                "detection_height": 240,
+                "preprocessing_mode": "crop",
+                "roi_x": 0.25,
+                "roi_y": 0.1,
+                "roi_width": 0.5,
+                "roi_height": 0.8,
+            },
+        )
+    finally:
+        backend_main.app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["camera"]["preprocessing_mode"] == "crop"
+    assert body["camera"]["max_frame_resolution"] == {"width": 320, "height": 240}
+    assert calls[0][2]["cameras"][0]["roi_x"] == 0.25
+    assert calls[0][2]["cameras"][0]["detection_width"] == 320
+
+
+def test_camera_preprocessing_rejects_resolution_above_global_cap(monkeypatch):
+    calls = []
+    repository = FakeCameraRepository()
+    user = {"role": "ADMINISTRATOR", "user_id": "admin-123"}
+    install_backend_overrides(repository, user, FakeWorkerClient(calls))
+    monkeypatch.setenv("VISION_MAX_FRAME_WIDTH", "320")
+    monkeypatch.setenv("VISION_MAX_FRAME_HEIGHT", "240")
+    try:
+        response = TestClient(backend_main.app).put(
+            "/api/v1/vision/cameras/1/settings",
+            json={
+                "detection_width": 321,
+                "detection_height": 240,
+                "preprocessing_mode": "fit",
+                "roi_x": 0,
+                "roi_y": 0,
+                "roi_width": 1,
+                "roi_height": 1,
+            },
+        )
+    finally:
+        backend_main.app.dependency_overrides.clear()
+
+    assert response.status_code == 422
+    assert repository.cameras[0].get("detection_width") is None
+    assert calls == []
+
+
+def test_camera_preprocessing_endpoint_is_admin_only():
+    repository = FakeCameraRepository()
+    backend_main.app.dependency_overrides[
+        backend_main.get_current_user
+    ] = lambda: {"role": "ENFORCER", "user_id": "enforcer-456"}
+    backend_main.app.dependency_overrides[
+        backend_main.get_camera_repository
+    ] = lambda: repository
+    backend_main.app.dependency_overrides[
+        backend_main.get_vision_worker_client
+    ] = lambda: FakeWorkerClient([])
+    try:
+        response = TestClient(backend_main.app).put(
+            "/api/v1/vision/cameras/1/settings",
+            json={
+                "detection_width": 640,
+                "detection_height": 480,
+                "preprocessing_mode": "fit",
+                "roi_x": 0,
+                "roi_y": 0,
+                "roi_width": 1,
+                "roi_height": 1,
+            },
+        )
+    finally:
+        backend_main.app.dependency_overrides.clear()
+
+    assert response.status_code == 403

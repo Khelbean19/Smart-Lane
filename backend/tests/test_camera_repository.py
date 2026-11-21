@@ -26,6 +26,7 @@ class FakeCursor:
         self.query = ""
         self.parameters = None
         self.executed = []
+        self.rowcount = 1
 
     def execute(self, query, parameters=None):
         self.query = query
@@ -95,3 +96,32 @@ def test_repository_reports_unavailable_database():
 
     with pytest.raises(CameraDatabaseUnavailable):
         repository.read_state()
+
+
+def test_update_camera_preprocessing_persists_all_settings_atomically():
+    connection = FakeConnection()
+    cursor = FakeCursor()
+    repository = create_repository(connection, cursor)
+
+    repository.update_camera_preprocessing(
+        11,
+        {
+            "detection_width": 640,
+            "detection_height": 480,
+            "preprocessing_mode": "crop",
+            "roi_x": 0.25,
+            "roi_y": 0.1,
+            "roi_width": 0.5,
+            "roi_height": 0.8,
+        },
+    )
+
+    assert cursor.executed[-1] == (
+        "UPDATE cameras SET detection_width = %s, "
+        "detection_height = %s, preprocessing_mode = %s, "
+        "roi_x = %s, roi_y = %s, roi_width = %s, roi_height = %s "
+        "WHERE camera_id = %s",
+        (640, 480, "crop", 0.25, 0.1, 0.5, 0.8, 11),
+    )
+    assert connection.commits == 1
+    assert connection.rollbacks == 0

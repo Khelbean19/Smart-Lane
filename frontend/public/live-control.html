@@ -481,7 +481,9 @@
                         </span>
                       </div>
 
-                      <div className="camera__view">
+                      <div
+                        className="camera__view camera__view--wide"
+                      >
                         {assigned && slot.status === 'ONLINE'
                           ? (
                             <img
@@ -495,10 +497,60 @@
                               {assigned ? 'Camera feed unavailable' : 'No camera assigned'}
                             </div>
                           )}
+                        {isAdmin && assigned && slot.status === 'ONLINE' && slot.detection_resolution && (
+                          <span
+                            className="zone-box zone-box--detection"
+                            style={slot.preprocessing_mode === 'crop' && slot.roi
+                              ? {
+                                left: `${slot.roi.x * 100}%`,
+                                top: `${slot.roi.y * 100}%`,
+                                width: `${slot.roi.width * 100}%`,
+                                height: `${slot.roi.height * 100}%`,
+                              }
+                              : { inset: 0 }}
+                          >
+                            <span className="zone-box__label">
+                              Detection input · {slot.detection_resolution.width} × {slot.detection_resolution.height} · {slot.preprocessing_mode}
+                            </span>
+                          </span>
+                        )}
                         {isAdmin && assigned && (
                           <span className="camera__tag">Source {slot.source}</span>
                         )}
                       </div>
+
+                      {isAdmin && assigned && (
+                        <div className="camera-diagnostics" aria-label="Camera preprocessing diagnostics">
+                          <p>
+                            <strong>Global cap</strong>
+                            <span>{cameraState.global_max_resolution
+                              ? `${cameraState.global_max_resolution.width} × ${cameraState.global_max_resolution.height}`
+                              : 'Unavailable'}</span>
+                          </p>
+                          <p>
+                            <strong>Source resolution</strong>
+                            <span>{slot.source_resolution
+                              ? `${slot.source_resolution.width} × ${slot.source_resolution.height}`
+                              : 'Unavailable until the first frame'}</span>
+                          </p>
+                          <p>
+                            <strong>Detection resolution</strong>
+                            <span>{slot.detection_resolution
+                              ? `${slot.detection_resolution.width} × ${slot.detection_resolution.height}`
+                              : 'Unavailable'}</span>
+                          </p>
+                          <p>
+                            <strong>Detection target mode</strong>
+                            <span>{slot.preprocessing_mode || 'Unavailable'}</span>
+                          </p>
+                          <a
+                            className="action-button action-button--light camera-settings__link"
+                            href={`/settings?camera_id=${slot.camera_id}#camera-preprocessing`}
+                          >
+                            Configure camera
+                          </a>
+                        </div>
+                      )}
 
                       {isAdmin && (
                         <label className="camera-slot__label">

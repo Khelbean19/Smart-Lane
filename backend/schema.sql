@@ -67,9 +67,25 @@ CREATE TABLE cameras (
                    REFERENCES road_ends (road_end_id),
     source         TEXT          NOT NULL,              -- USB index or stream URL
     status         camera_status NOT NULL,
-    last_frame_at  TIMESTAMP                            -- for fault check
+    last_frame_at  TIMESTAMP,                           -- for fault check
+    detection_width INTEGER NOT NULL DEFAULT 640,
+    detection_height INTEGER NOT NULL DEFAULT 480,
+    preprocessing_mode TEXT NOT NULL DEFAULT 'fit'
+                   CHECK (preprocessing_mode IN ('fit', 'crop')),
+    roi_x          DOUBLE PRECISION NOT NULL DEFAULT 0
+                   CHECK (roi_x >= 0 AND roi_x <= 1),
+    roi_y          DOUBLE PRECISION NOT NULL DEFAULT 0
+                   CHECK (roi_y >= 0 AND roi_y <= 1),
+    roi_width      DOUBLE PRECISION NOT NULL DEFAULT 1
+                   CHECK (roi_width > 0 AND roi_width <= 1),
+    roi_height     DOUBLE PRECISION NOT NULL DEFAULT 1
+                   CHECK (roi_height > 0 AND roi_height <= 1),
+    CONSTRAINT ck_cameras_detection_dimensions
+        CHECK (detection_width > 0 AND detection_height > 0),
+    CONSTRAINT ck_cameras_roi_bounds
+        CHECK (roi_x + roi_width <= 1 AND roi_y + roi_height <= 1)
 );
-COMMENT ON TABLE cameras IS 'All registered cameras in the system network (dedicated table for future scalability).';
+COMMENT ON TABLE cameras IS 'Registered cameras and their per-camera inference preprocessing settings.';
 
 CREATE TABLE camera_assignments (
     road_end_id  INTEGER   PRIMARY KEY

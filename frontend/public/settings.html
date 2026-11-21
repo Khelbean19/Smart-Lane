@@ -386,90 +386,6 @@
     }
 
 
-    function ZonePanel({ values, onChange, onSelectCamera }) {
-      const cameraSourceIndex = values.camera === CAMERA_OPTIONS[0] ? 0 : 1;
-
-      return (
-        <section className="panel">
-          <div className="panel__header panel__header--center">
-            <h2 className="panel__title">Camera detection zones</h2>
-            {ZONE.saved && (
-              <span className="badge badge--soft">
-                <span className="badge__dot" />
-                Zone saved
-              </span>
-            )}
-          </div>
-
-          <div className="zone-toolbar">
-            <div className="field">
-              <label className="field__label" htmlFor="camera">Camera</label>
-              <select
-                className="field__input field__select"
-                id="camera"
-                name="camera"
-                value={values.camera}
-                onChange={onChange}
-              >
-                {CAMERA_OPTIONS.map((camera) => (
-                  <option key={camera} value={camera}>{camera}</option>
-                ))}
-              </select>
-            </div>
-
-            <button
-              type="button"
-              className="action-button action-button--light"
-              onClick={() => onSelectCamera(CAMERA_OPTIONS[0])}
-            >
-              <CameraIcon />
-              Preview A
-            </button>
-          </div>
-
-          <div className="camera__view camera__view--wide">
-            <img
-              className="camera__stream"
-              src={`${VISION_WORKER_URL}/camera/${cameraSourceIndex}/stream`}
-              alt={`Live feed for ${values.camera}`}
-            />
-            <span className="camera__tag">{values.camera} · Source {cameraSourceIndex}</span>
-
-            <span
-              className="zone-box"
-              style={{
-                left: `${ZONE.area.left}%`,
-                top: `${ZONE.area.top}%`,
-                width: `${ZONE.area.width}%`,
-                height: `${ZONE.area.height}%`,
-              }}
-            >
-              <span className="zone-box__label">Detection zone · {ZONE.vertices} vertices</span>
-              <span className="zone-box__handle zone-box__handle--tl" />
-              <span className="zone-box__handle zone-box__handle--tr" />
-              <span className="zone-box__handle zone-box__handle--bl" />
-              <span className="zone-box__handle zone-box__handle--br" />
-            </span>
-
-          </div>
-
-          {/* BACKEND: Lagyan nyo ng onClick yung Draw zone and Clear zone. Yung ZONE.coverage ay percent ng preview na sakop ng zone. */}
-          <div className="zone-actions">
-            <button type="button" className="action-button action-button--teal">
-              <DrawZoneIcon />
-              Draw zone
-            </button>
-            <button type="button" className="action-button action-button--light">
-              <EraserIcon />
-              Clear zone
-            </button>
-            <p className="zone-actions__note">Detection region: {ZONE.coverage} of preview</p>
-          </div>
-        </section>
-      );
-    }
-
-
     function TimingPanel({ values, onChange }) {
       return (
         <section className="panel">
@@ -692,9 +608,515 @@
     }
 
 
+    function formatResolution(resolution) {
+      return resolution
+        ? `${resolution.width} × ${resolution.height}`
+        : 'Unavailable until the first frame';
+    }
+
+    function CameraPreprocessingPanel({ isAdmin }) {
+      const requestedCameraId = new URLSearchParams(window.location.search).get('camera_id');
+      const [cameraState, setCameraState] = useState(null);
+      const [selectedCameraId, setSelectedCameraId] = useState('');
+      const [form, setForm] = useState(null);
+      const [dirty, setDirty] = useState(false);
+      const [contentRect, setContentRect] = useState(null);
+      const [drawMode, setDrawMode] = useState(false);
+      const [loading, setLoading] = useState(true);
+      const [saving, setSaving] = useState(false);
+      const [error, setError] = useState('');
+      const [notice, setNotice] = useState('');
+      const initializedCameraId = React.useRef('');
+      const previewRef = React.useRef(null);
+      const baselineRef = React.useRef('');
+      const interactionRef = React.useRef(null);
+
+      useEffect(() => {
+        if (!isAdmin) return undefined;
+        let isMounted = true;
+        let firstLoad = true;
+
+        async function refresh() {
+          try {
+            const response = await window.smartLaneSession.authenticatedFetch(
+              '/api/v1/vision/camera-slots',
+            );
+            const body = await response.json();
+            if (!response.ok) {
+              throw new Error(body.detail || `Could not load camera settings (HTTP ${response.status}).`);
+            }
+            if (!isMounted) return;
+            setCameraState(body);
+            setError('');
+            if (firstLoad && body.cameras.length) {
+              const requested = body.cameras.find(
+                (camera) => String(camera.camera_id) === requestedCameraId,
+              );
+              setSelectedCameraId(String((requested || body.cameras[0]).camera_id));
+            }
+          } catch (loadError) {
+            console.error(loadError);
+            if (isMounted) setError(loadError.message);
+          } finally {
+            if (isMounted && firstLoad) {
+              firstLoad = false;
+              setLoading(false);
+            }
+          }
+        }
+
+        refresh();
+        const timer = window.setInterval(refresh, 10000);
+        return () => {
+          isMounted = false;
+          window.clearInterval(timer);
+        };
+      }, [isAdmin, requestedCameraId]);
+
+      const camera = cameraState?.cameras.find(
+        (item) => String(item.camera_id) === selectedCameraId,
+      );
+
+      useEffect(() => {
+        if (!camera || initializedCameraId.current === selectedCameraId) return;
+        initializedCameraId.current = selectedCameraId;
+        const nextForm = {
+          detection_width: String(camera.detection_width),
+          detection_height: String(camera.detection_height),
+          preprocessing_mode: camera.preprocessing_mode,
+          roi_x: String(camera.roi_x),
+          roi_y: String(camera.roi_y),
+          roi_width: String(camera.roi_width),
+          roi_height: String(camera.roi_height),
+        };
+        setForm(nextForm);
+        baselineRef.current = JSON.stringify(nextForm);
+        setDirty(false);
+      }, [camera, selectedCameraId]);
+
+      function updateForm(event) {
+        const { name, value } = event.target;
+        if (name === 'preprocessing_mode' && value !== 'crop') setDrawMode(false);
+        setForm((previous) => {
+          const next = { ...previous, [name]: value };
+          if (name === 'detection_width' && cameraState?.global_max_resolution) {
+            const width = Math.min(cameraState.global_max_resolution.width, Math.max(1, Number(value) || 1));
+            next.roi_width = String(width / cameraState.global_max_resolution.width);
+            next.roi_x = String(Math.min(Number(next.roi_x) || 0, 1 - Number(next.roi_width)));
+          }
+          if (name === 'detection_height' && cameraState?.global_max_resolution) {
+            const height = Math.min(cameraState.global_max_resolution.height, Math.max(1, Number(value) || 1));
+            next.roi_height = String(height / cameraState.global_max_resolution.height);
+            next.roi_y = String(Math.min(Number(next.roi_y) || 0, 1 - Number(next.roi_height)));
+          }
+          setDirty(JSON.stringify(next) !== baselineRef.current);
+          return next;
+        });
+        setNotice('');
+      }
+
+      useEffect(() => {
+        if (!previewRef.current) return undefined;
+        function updateContentRect() {
+          const element = previewRef.current;
+          if (!element) return;
+          const rect = element.getBoundingClientRect();
+          const source = camera?.preview_resolution || camera?.source_resolution;
+          const sourceRatio = source ? source.width / source.height : 16 / 9;
+          const frameRatio = rect.width / rect.height;
+          let width = rect.width;
+          let height = rect.height;
+          let left = 0;
+          let top = 0;
+          if (sourceRatio > frameRatio) {
+            height = rect.width / sourceRatio;
+            top = (rect.height - height) / 2;
+          } else {
+            width = rect.height * sourceRatio;
+            left = (rect.width - width) / 2;
+          }
+          setContentRect({ left, top, width, height });
+        }
+        updateContentRect();
+        const observer = new ResizeObserver(updateContentRect);
+        observer.observe(previewRef.current);
+        return () => observer.disconnect();
+      }, [camera?.camera_id, camera?.preview_resolution, camera?.source_resolution]);
+
+      function getZonePoint(event) {
+        const rect = previewRef.current.getBoundingClientRect();
+        const frame = contentRect || { left: 0, top: 0, width: rect.width, height: rect.height };
+        const x = Math.max(frame.left, Math.min(frame.left + frame.width, event.clientX - rect.left));
+        const y = Math.max(frame.top, Math.min(frame.top + frame.height, event.clientY - rect.top));
+        return {
+          x: (x - frame.left) / frame.width,
+          y: (y - frame.top) / frame.height,
+        };
+      }
+
+      function syncZone(next) {
+        if (!cameraState?.global_max_resolution) return;
+        const width = Math.max(1 / cameraState.global_max_resolution.width, Math.min(1, next.width));
+        const height = Math.max(1 / cameraState.global_max_resolution.height, Math.min(1, next.height));
+        const x = Math.max(0, Math.min(1 - width, next.x));
+        const y = Math.max(0, Math.min(1 - height, next.y));
+        const detectionWidth = Math.max(1, Math.round(width * cameraState.global_max_resolution.width));
+        const detectionHeight = Math.max(1, Math.round(height * cameraState.global_max_resolution.height));
+        setForm((previous) => {
+          const nextForm = {
+            ...previous,
+            roi_x: String(x),
+            roi_y: String(y),
+            roi_width: String(width),
+            roi_height: String(height),
+            detection_width: String(detectionWidth),
+            detection_height: String(detectionHeight),
+          };
+          setDirty(JSON.stringify(nextForm) !== baselineRef.current);
+          return nextForm;
+        });
+      }
+
+      function startDraw(event) {
+        if (!drawMode || form.preprocessing_mode !== 'crop' || !cameraState?.global_max_resolution) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        const start = getZonePoint(event);
+        interactionRef.current = { type: 'draw', start };
+        syncZone({ x: start.x, y: start.y, width: 0, height: 0 });
+      }
+
+      function startMove(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        interactionRef.current = {
+          type: 'move',
+          start: getZonePoint(event),
+          base: {
+            x: Number(form.roi_x),
+            y: Number(form.roi_y),
+            width: Number(form.roi_width),
+            height: Number(form.roi_height),
+          },
+        };
+      }
+
+      function startResize(event, handle) {
+        event.preventDefault();
+        event.stopPropagation();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        interactionRef.current = {
+          type: 'resize',
+          handle,
+          base: {
+            x: Number(form.roi_x),
+            y: Number(form.roi_y),
+            width: Number(form.roi_width),
+            height: Number(form.roi_height),
+          },
+        };
+      }
+
+      function handlePreviewPointerMove(event) {
+        const interaction = interactionRef.current;
+        if (!interaction) return;
+        const point = getZonePoint(event);
+        if (interaction.type === 'draw') {
+          const x = Math.min(interaction.start.x, point.x);
+          const y = Math.min(interaction.start.y, point.y);
+          syncZone({
+            x,
+            y,
+            width: Math.abs(point.x - interaction.start.x),
+            height: Math.abs(point.y - interaction.start.y),
+          });
+        } else if (interaction.type === 'move') {
+          const dx = point.x - interaction.start.x;
+          const dy = point.y - interaction.start.y;
+          syncZone({
+            x: interaction.base.x + dx,
+            y: interaction.base.y + dy,
+            width: interaction.base.width,
+            height: interaction.base.height,
+          });
+        } else if (interaction.type === 'resize') {
+          const base = interaction.base;
+          let x = base.x;
+          let y = base.y;
+          let right = base.x + base.width;
+          let bottom = base.y + base.height;
+          if (interaction.handle.includes('l')) x = point.x;
+          if (interaction.handle.includes('r')) right = point.x;
+          if (interaction.handle.includes('t')) y = point.y;
+          if (interaction.handle.includes('b')) bottom = point.y;
+          x = Math.max(0, Math.min(x, right - 1 / cameraState.global_max_resolution.width));
+          y = Math.max(0, Math.min(y, bottom - 1 / cameraState.global_max_resolution.height));
+          right = Math.min(1, Math.max(right, x + 1 / cameraState.global_max_resolution.width));
+          bottom = Math.min(1, Math.max(bottom, y + 1 / cameraState.global_max_resolution.height));
+          syncZone({ x, y, width: right - x, height: bottom - y });
+        }
+      }
+
+      function endPreviewInteraction(event) {
+        if (interactionRef.current) {
+          if (typeof event.currentTarget.hasPointerCapture === 'function'
+            && event.currentTarget.hasPointerCapture(event.pointerId)) {
+            event.currentTarget.releasePointerCapture(event.pointerId);
+          }
+        }
+        interactionRef.current = null;
+        setDrawMode(false);
+      }
+
+      function clearZone() {
+        setForm((previous) => {
+          const next = {
+            ...previous,
+            roi_x: '0',
+            roi_y: '0',
+            roi_width: '0',
+            roi_height: '0',
+          };
+          setDirty(JSON.stringify(next) !== baselineRef.current);
+          return next;
+        });
+        setNotice('');
+        setDrawMode(false);
+      }
+
+      async function saveSettings(event) {
+        event.preventDefault();
+        const width = Number(form.detection_width);
+        const height = Number(form.detection_height);
+        if (!Number.isInteger(width) || !Number.isInteger(height)
+          || width < 1 || height < 1
+          || width > cameraState.global_max_resolution.width
+          || height > cameraState.global_max_resolution.height) {
+          setError(`Detection resolution must stay within the global cap: ${cameraState.global_max_resolution.width} × ${cameraState.global_max_resolution.height}.`);
+          return;
+        }
+        if (form.preprocessing_mode === 'crop'
+          && (Number(form.roi_width) <= 0 || Number(form.roi_height) <= 0
+            || !Number.isFinite(Number(form.roi_width))
+            || !Number.isFinite(Number(form.roi_height)))) {
+          setError('Draw a detection bounding box before saving crop mode.');
+          return;
+        }
+        if (!dirty) {
+          setNotice('No camera setting changes to save.');
+          return;
+        }
+        if (!window.confirm('Save the modified camera settings?')) return;
+        setSaving(true);
+        setError('');
+        setNotice('');
+        try {
+          const response = await window.smartLaneSession.authenticatedFetch(
+            `/api/v1/vision/cameras/${selectedCameraId}/settings`,
+            {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                detection_width: Number(form.detection_width),
+                detection_height: Number(form.detection_height),
+                preprocessing_mode: form.preprocessing_mode,
+                roi_x: form.preprocessing_mode === 'crop' ? Number(form.roi_x) : 0,
+                roi_y: form.preprocessing_mode === 'crop' ? Number(form.roi_y) : 0,
+                roi_width: form.preprocessing_mode === 'crop' ? Number(form.roi_width) : 1,
+                roi_height: form.preprocessing_mode === 'crop' ? Number(form.roi_height) : 1,
+              }),
+            },
+          );
+          const body = await response.json();
+          if (!response.ok) {
+            throw new Error(body.detail || `Could not save camera settings (HTTP ${response.status}).`);
+          }
+          setCameraState(body);
+          baselineRef.current = JSON.stringify(form);
+          setDirty(false);
+          setNotice(body.pending_reconciliation
+            ? 'Settings saved; they will apply when the vision worker is available.'
+            : 'Camera settings saved.');
+        } catch (saveError) {
+          console.error(saveError);
+          setError(saveError.message);
+        } finally {
+          setSaving(false);
+        }
+      }
+
+      return (
+        <section className="panel camera-settings-panel" id="camera-preprocessing">
+          <div className="panel__header panel__header--center">
+            <div>
+              <h2 className="panel__title">Camera settings</h2>
+                <p className="panel__subtitle">Preview, detection resolution, target mode, and crop region</p>
+            </div>
+          </div>
+
+          {!isAdmin && (
+            <p className="camera__message">Camera settings are available to administrators.</p>
+          )}
+          {isAdmin && loading && <p className="camera__message">Loading camera settings…</p>}
+          {isAdmin && error && <p className="camera__message camera__message--error" role="alert">{error}</p>}
+          {isAdmin && !loading && cameraState && cameraState.cameras.length === 0 && (
+            <p className="camera__message">No cameras are registered.</p>
+          )}
+          {isAdmin && camera && form && (
+            <>
+              <div className="field camera-settings__camera">
+                <label className="field__label" htmlFor="preprocessingCamera">Camera</label>
+                <select
+                  className="field__input field__select"
+                  id="preprocessingCamera"
+                  value={selectedCameraId}
+                  onChange={(event) => {
+                    initializedCameraId.current = '';
+                    setSelectedCameraId(event.target.value);
+                  }}
+                >
+                  {cameraState.cameras.map((item) => (
+                    <option key={item.camera_id} value={item.camera_id}>
+                      {item.camera_name} · {item.region}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="camera-diagnostics" aria-label="Camera resolution diagnostics">
+                <p><strong>Global cap</strong><span>{formatResolution(cameraState.global_max_resolution)}</span></p>
+                <p><strong>Source resolution</strong><span>{formatResolution(camera.source_resolution)}</span></p>
+                <p><strong>Detection resolution</strong><span>{camera.detection_width} × {camera.detection_height}</span></p>
+                <p><strong>Detection target mode</strong><span>{camera.preprocessing_mode}</span></p>
+              </div>
+
+              <div
+                ref={previewRef}
+                className="camera__view camera__view--wide camera__view--interactive"
+                onPointerDown={startDraw}
+                onPointerMove={handlePreviewPointerMove}
+                onPointerUp={endPreviewInteraction}
+                onPointerCancel={endPreviewInteraction}
+              >
+                {camera.status === 'ONLINE'
+                  ? (
+                    <img
+                      className="camera__stream"
+                      src={`${VISION_WORKER_URL}/camera/${camera.camera_id}/stream`}
+                      alt={`Capped live preview for ${camera.camera_name}`}
+                    />
+                  )
+                  : (
+                    <div className="camera__empty">
+                      {camera.status === 'FAULT' ? 'Camera feed unavailable' : 'Camera stream is inactive'}
+                    </div>
+                  )}
+                {camera.status === 'ONLINE' && form.preprocessing_mode === 'fit' && (
+                  <span
+                    className="zone-box zone-box--detection"
+                    style={contentRect ? {
+                      left: contentRect.left,
+                      top: contentRect.top,
+                      width: contentRect.width,
+                      height: contentRect.height,
+                    } : { inset: 0 }}
+                  >
+                    <span className="zone-box__label">
+                      Detection input · {form.detection_width} × {form.detection_height} · {form.preprocessing_mode}
+                    </span>
+                  </span>
+                )}
+                {camera.status === 'ONLINE' && form.preprocessing_mode === 'crop'
+                  && Number(form.roi_width) > 0 && Number(form.roi_height) > 0 && contentRect && (
+                  <span
+                    className="zone-box zone-box--editable"
+                    style={{
+                      left: contentRect.left + Number(form.roi_x) * contentRect.width,
+                      top: contentRect.top + Number(form.roi_y) * contentRect.height,
+                      width: Number(form.roi_width) * contentRect.width,
+                      height: Number(form.roi_height) * contentRect.height,
+                    }}
+                    onPointerDown={startMove}
+                  >
+                    <span className="zone-box__label">Detection zone</span>
+                    {['tl', 'tr', 'bl', 'br'].map((handle) => (
+                      <span
+                        key={handle}
+                        className={`zone-box__handle zone-box__handle--${handle}`}
+                        onPointerDown={(event) => startResize(event, handle)}
+                      />
+                    ))}
+                  </span>
+                )}
+              </div>
+
+              {form.preprocessing_mode === 'crop' && (
+                <div className="zone-actions">
+                  <button type="button" className="action-button action-button--teal" onClick={(event) => {
+                    event.preventDefault();
+                    setDrawMode(true);
+                    setNotice('Drag across the preview to draw the detection zone.');
+                  }}>
+                    <DrawZoneIcon />
+                    Draw zone
+                  </button>
+                  <button type="button" className="action-button action-button--light" onClick={clearZone}>
+                    <EraserIcon />
+                    Clear zone
+                  </button>
+                  <p className="zone-actions__note">
+                    Detection region: {Number(form.roi_width) > 0
+                      ? `${Math.round(Number(form.roi_width) * 100)}% × ${Math.round(Number(form.roi_height) * 100)}%`
+                      : 'None'}
+                  </p>
+                </div>
+              )}
+
+              <form className="stack-form" onSubmit={saveSettings}>
+                <div className="field-pair">
+                  <div className="field">
+                    <label className="field__label" htmlFor="detectionWidth">Detection width</label>
+                    <input className="field__input" id="detectionWidth" name="detection_width" type="number" min="1" max={cameraState.global_max_resolution.width} value={form.detection_width} onChange={updateForm} required />
+                  </div>
+                  <div className="field">
+                    <label className="field__label" htmlFor="detectionHeight">Detection height</label>
+                    <input className="field__input" id="detectionHeight" name="detection_height" type="number" min="1" max={cameraState.global_max_resolution.height} value={form.detection_height} onChange={updateForm} required />
+                  </div>
+                </div>
+
+                <div className="field">
+                  <label className="field__label" htmlFor="preprocessingMode">Detection target mode</label>
+                  <select className="field__input field__select" id="preprocessingMode" name="preprocessing_mode" value={form.preprocessing_mode} onChange={updateForm}>
+                    <option value="fit">Fit full frame with letterboxing</option>
+                    <option value="crop">Crop configured ROI, then letterbox</option>
+                  </select>
+                </div>
+
+                <div className="camera-settings__footer">
+                  <p className="camera__message">The global cap is deployment configuration and cannot be changed here. The worker reports source resolution after capturing a frame.</p>
+                  <button type="submit" className="action-button action-button--green" disabled={saving}>
+                    {saving ? 'Saving…' : 'Save camera settings'}
+                  </button>
+                </div>
+              </form>
+              {notice && <p className="camera__message" role="status">{notice}</p>}
+            </>
+          )}
+        </section>
+      );
+    }
+
     function App() {
       const [values, setValues] = useState(SETTINGS);
       const [pairing, setPairing] = useState(PAIRING);
+      const [currentUser, setCurrentUser] = useState(null);
+
+      useEffect(() => {
+        window.smartLaneSession.getCurrentUser()
+          .then(setCurrentUser)
+          .catch((error) => console.error(error));
+      }, []);
 
       const handleChange = (event) => {
         const { name, type, value, checked } = event.target;
@@ -728,10 +1150,8 @@
             <div className="content">
               <SettingsToolbar onReset={handleReset} />
               <div className="split split--left">
-                <ZonePanel
-                  values={values}
-                  onChange={handleChange}
-                  onSelectCamera={handleSelectCamera}
+                <CameraPreprocessingPanel
+                  isAdmin={currentUser && currentUser.role === 'ADMINISTRATOR'}
                 />
                 <TimingPanel values={values} onChange={handleChange} />
               </div>

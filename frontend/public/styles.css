@@ -1507,12 +1507,14 @@ body {
 }
 
 .stack-form {
-  margin-top: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .stack-form .field + .field,
 .stack-form .field-pair + .field {
-  margin-top: 16px;
+  /* margin-top: 16px; */
 }
 
 .stack-form .field__label {
@@ -1753,6 +1755,82 @@ body {
   font: inherit;
 }
 
+.camera-diagnostics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.camera-diagnostics p {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-direction: row;
+  gap: 4px;
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: 6px;
+  background: #f1f5f9;
+  color: #475569;
+  font-size: 11px;
+}
+
+.camera-diagnostics strong {
+  color: #1e293b;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.camera-diagnostics span {
+  color: #334155;
+  font-size: 11px;
+  text-align: right;
+}
+
+.camera-settings-panel {
+  margin-bottom: 14px;
+}
+
+.camera-settings__camera {
+  max-width: 420px;
+  margin-top: 18px;
+}
+
+.camera-settings__roi {
+  margin-top: 16px;
+}
+
+.camera-settings__roi .camera__message {
+  grid-column: 1 / -1;
+}
+
+.camera-settings__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+}
+
+.camera-settings__footer .camera__message {
+  margin: 0;
+}
+
+.camera-settings__link {
+  display: inline-flex;
+  justify-content: center;
+  grid-column: 1 / -1;
+  width: 100%;
+  min-height: 38px;
+  margin-top: 4px;
+  text-decoration: none;
+  border-color: #99ddd6;
+  background: #edfafa;
+  color: #176d67;
+  font-weight: 650;
+}
+
 .camera-slot__actions {
   display: flex;
   justify-content: flex-end;
@@ -1772,6 +1850,17 @@ body {
 
 .camera__message--error {
   color: #b42318;
+}
+
+@media (max-width: 640px) {
+  .camera-diagnostics {
+    grid-template-columns: 1fr;
+  }
+
+  .camera-settings__footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 .detect-box {
@@ -1806,6 +1895,43 @@ body {
 .zone-box {
   position: absolute;
   border: 1.5px dashed var(--teal-bright);
+}
+
+.zone-box--detection {
+  z-index: 2;
+  pointer-events: none;
+}
+
+.zone-box--detection .zone-box__label {
+  top: 5px;
+  bottom: auto;
+  left: 5px;
+  margin: 0;
+}
+
+.camera__view--interactive {
+  touch-action: none;
+  user-select: none;
+}
+
+.zone-box--editable {
+  z-index: 3;
+  cursor: move;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.zone-box--editable .zone-box__handle {
+  width: 10px;
+  height: 10px;
+  cursor: nwse-resize;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.zone-box--editable .zone-box__handle--tr,
+.zone-box--editable .zone-box__handle--bl {
+  cursor: nesw-resize;
 }
 
 .zone-box__label {

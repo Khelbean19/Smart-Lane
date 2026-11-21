@@ -125,6 +125,8 @@ def create_worker_app(camera_manager: CameraManager | None = None) -> FastAPI:
                 camera.configure,
                 update.model_dump(exclude_unset=True),
             )
+        except ValueError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
         except CameraUnavailable as error:
             raise _camera_unavailable(error) from error
 
