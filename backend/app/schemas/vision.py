@@ -111,3 +111,61 @@ class CameraReconcileRequest(BaseModel):
         if not set(self.active_camera_ids).issubset(camera_ids):
             raise ValueError("Active camera IDs must exist in the registry.")
         return self
+
+
+class CameraActivationError(BaseModel):
+    camera_id: int
+    error: str
+
+
+class CameraSlotResponse(BaseModel):
+    slot_id: int
+    region: str | None
+    camera_id: int | None
+    camera_name: str | None
+    status: str
+    source: str | None = None
+    source_resolution: CameraResolutionResponse | None = None
+    preview_resolution: CameraResolutionResponse | None = None
+    max_frame_resolution: CameraResolutionResponse | None = None
+    detection_resolution: CameraResolutionResponse | None = None
+    preprocessing_mode: Literal["fit", "crop"] | None = None
+    roi: dict[str, float] | None = None
+
+
+class CameraRegistryStatusResponse(BaseModel):
+    camera_id: int
+    camera_name: str
+    region: str
+    status: str
+    source: str
+    detection_width: int
+    detection_height: int
+    preprocessing_mode: Literal["fit", "crop"]
+    roi_x: float
+    roi_y: float
+    roi_width: float
+    roi_height: float
+    max_frame_resolution: CameraResolutionResponse
+    source_resolution: CameraResolutionResponse | None
+    preview_resolution: CameraResolutionResponse | None
+
+
+class CameraSlotsResponse(BaseModel):
+    slots: list[CameraSlotResponse]
+    cameras: list[CameraRegistryStatusResponse]
+    global_max_resolution: CameraResolutionResponse | None
+    worker_available: bool
+    worker_error: str | None
+    activation_errors: list[CameraActivationError]
+
+
+class CameraAssignmentsResponse(CameraSlotsResponse):
+    assignments_saved: bool
+    pending_reconciliation: bool
+
+
+class CameraPreprocessingResponse(CameraSlotsResponse):
+    camera: CameraRegistryStatusResponse
+    settings_saved: bool
+    pending_reconciliation: bool

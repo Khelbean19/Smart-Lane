@@ -63,7 +63,27 @@
     const ALERT_CHANNELS = ['Telegram bot', 'SMS', 'Email'];
     const VISION_WORKER_URL = 'http://127.0.0.1:8001';
 
-    const { useEffect, useState } = React;
+    const { useEffect, useLayoutEffect, useState } = React;
+
+    function calculateLetterboxedRect(containerRect, sourceResolution) {
+      if (!containerRect) return null;
+      const sourceRatio = sourceResolution?.width && sourceResolution?.height
+        ? sourceResolution.width / sourceResolution.height
+        : 16 / 9;
+      const frameRatio = containerRect.width / containerRect.height;
+      let width = containerRect.width;
+      let height = containerRect.height;
+      let left = 0;
+      let top = 0;
+      if (sourceRatio > frameRatio) {
+        height = containerRect.width / sourceRatio;
+        top = (containerRect.height - height) / 2;
+      } else {
+        width = containerRect.height * sourceRatio;
+        left = (containerRect.width - width) / 2;
+      }
+      return { left, top, width, height };
+    }
 
     function LogoMark() {
       return (
@@ -626,6 +646,7 @@
       const [saving, setSaving] = useState(false);
       const [error, setError] = useState('');
       const [notice, setNotice] = useState('');
+      const [intrinsicResolution, setIntrinsicResolution] = useState(null);
       const initializedCameraId = React.useRef('');
       const previewRef = React.useRef(null);
       const baselineRef = React.useRef('');
@@ -676,10 +697,12 @@
       const camera = cameraState?.cameras.find(
         (item) => String(item.camera_id) === selectedCameraId,
       );
+      const cameraActive = camera?.status === 'ONLINE';
 
       useEffect(() => {
         if (!camera || initializedCameraId.current === selectedCameraId) return;
         initializedCameraId.current = selectedCameraId;
+        setIntrinsicResolution(null);
         const nextForm = {
           detection_width: String(camera.detection_width),
           detection_height: String(camera.detection_height),
@@ -695,6 +718,7 @@
       }, [camera, selectedCameraId]);
 
       function updateForm(event) {
+        if (!cameraActive) return;
         const { name, value } = event.target;
         if (name === 'preprocessing_mode' && value !== 'crop') setDrawMode(false);
         setForm((previous) => {
@@ -715,33 +739,38 @@
         setNotice('');
       }
 
-      useEffect(() => {
+      useLayoutEffect(() => {
         if (!previewRef.current) return undefined;
+        const sourceResolution = intrinsicResolution
+          || camera?.preview_resolution
+          || camera?.source_resolution;
         function updateContentRect() {
-          const element = previewRef.current;
-          if (!element) return;
-          const rect = element.getBoundingClientRect();
-          const source = camera?.preview_resolution || camera?.source_resolution;
-          const sourceRatio = source ? source.width / source.height : 16 / 9;
-          const frameRatio = rect.width / rect.height;
-          let width = rect.width;
-          let height = rect.height;
-          let left = 0;
-          let top = 0;
-          if (sourceRatio > frameRatio) {
-            height = rect.width / sourceRatio;
-            top = (rect.height - height) / 2;
-          } else {
-            width = rect.height * sourceRatio;
-            left = (rect.width - width) / 2;
-          }
-          setContentRect({ left, top, width, height });
+          const rect = previewRef.current.getBoundingClientRect();
+          setContentRect(calculateLetterboxedRect(rect, sourceResolution));
         }
         updateContentRect();
         const observer = new ResizeObserver(updateContentRect);
         observer.observe(previewRef.current);
         return () => observer.disconnect();
-      }, [camera?.camera_id, camera?.preview_resolution, camera?.source_resolution]);
+      }, [
+        camera?.camera_id,
+        camera?.preview_resolution?.width,
+        camera?.preview_resolution?.height,
+        camera?.source_resolution?.width,
+        camera?.source_resolution?.height,
+        intrinsicResolution?.width,
+        intrinsicResolution?.height,
+      ]);
+
+      function handleStreamLoad(event) {
+        const image = event.currentTarget;
+        if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+          setIntrinsicResolution({
+            width: image.naturalWidth,
+            height: image.naturalHeight,
+          });
+        }
+      }
 
       function getZonePoint(event) {
         const rect = previewRef.current.getBoundingClientRect();
@@ -778,7 +807,7 @@
       }
 
       function startDraw(event) {
-        if (!drawMode || form.preprocessing_mode !== 'crop' || !cameraState?.global_max_resolution) return;
+        if (!cameraActive || !drawMode || form.preprocessing_mode !== 'crop' || !cameraState?.global_max_resolution) return;
         event.preventDefault();
         event.currentTarget.setPointerCapture(event.pointerId);
         const start = getZonePoint(event);
@@ -787,6 +816,7 @@
       }
 
       function startMove(event) {
+        if (!cameraActive) return;
         event.preventDefault();
         event.stopPropagation();
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -803,6 +833,7 @@
       }
 
       function startResize(event, handle) {
+        if (!cameraActive) return;
         event.preventDefault();
         event.stopPropagation();
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -819,6 +850,7 @@
       }
 
       function handlePreviewPointerMove(event) {
+        if (!cameraActive) return;
         const interaction = interactionRef.current;
         if (!interaction) return;
         const point = getZonePoint(event);
@@ -870,6 +902,7 @@
       }
 
       function clearZone() {
+        if (!cameraActive) return;
         setForm((previous) => {
           const next = {
             ...previous,
@@ -887,6 +920,10 @@
 
       async function saveSettings(event) {
         event.preventDefault();
+        if (!cameraActive) {
+          setError('Camera must be online before resolution settings can be changed.');
+          return;
+        }
         const width = Number(form.detection_width);
         const height = Number(form.detection_height);
         if (!Number.isInteger(width) || !Number.isInteger(height)
@@ -991,13 +1028,19 @@
                 <p><strong>Detection target mode</strong><span>{camera.preprocessing_mode}</span></p>
               </div>
 
+              {!cameraActive && (
+                <p className="camera__message camera__message--error" role="status">
+                  Camera is {camera.status.toLowerCase()}. Bring the camera online before changing resolution settings.
+                </p>
+              )}
+
               <div
                 ref={previewRef}
-                className="camera__view camera__view--wide camera__view--interactive"
-                onPointerDown={startDraw}
-                onPointerMove={handlePreviewPointerMove}
-                onPointerUp={endPreviewInteraction}
-                onPointerCancel={endPreviewInteraction}
+                className={`camera__view camera__view--wide${cameraActive ? ' camera__view--interactive' : ''}${drawMode ? ' camera__view--draw-mode' : ''}`}
+                onPointerDown={cameraActive ? startDraw : undefined}
+                onPointerMove={cameraActive ? handlePreviewPointerMove : undefined}
+                onPointerUp={cameraActive ? endPreviewInteraction : undefined}
+                onPointerCancel={cameraActive ? endPreviewInteraction : undefined}
               >
                 {camera.status === 'ONLINE'
                   ? (
@@ -1005,6 +1048,7 @@
                       className="camera__stream"
                       src={`${VISION_WORKER_URL}/camera/${camera.camera_id}/stream`}
                       alt={`Capped live preview for ${camera.camera_name}`}
+                      onLoad={handleStreamLoad}
                     />
                   )
                   : (
@@ -1012,15 +1056,15 @@
                       {camera.status === 'FAULT' ? 'Camera feed unavailable' : 'Camera stream is inactive'}
                     </div>
                   )}
-                {camera.status === 'ONLINE' && form.preprocessing_mode === 'fit' && (
+                {camera.status === 'ONLINE' && form.preprocessing_mode === 'fit' && contentRect && (
                   <span
                     className="zone-box zone-box--detection"
-                    style={contentRect ? {
+                    style={{
                       left: contentRect.left,
                       top: contentRect.top,
                       width: contentRect.width,
                       height: contentRect.height,
-                    } : { inset: 0 }}
+                    }}
                   >
                     <span className="zone-box__label">
                       Detection input · {form.detection_width} × {form.detection_height} · {form.preprocessing_mode}
@@ -1053,7 +1097,7 @@
 
               {form.preprocessing_mode === 'crop' && (
                 <div className="zone-actions">
-                  <button type="button" className="action-button action-button--teal" onClick={(event) => {
+                  <button type="button" className="action-button action-button--teal" disabled={!cameraActive} aria-pressed={drawMode} onClick={(event) => {
                     event.preventDefault();
                     setDrawMode(true);
                     setNotice('Drag across the preview to draw the detection zone.');
@@ -1061,7 +1105,7 @@
                     <DrawZoneIcon />
                     Draw zone
                   </button>
-                  <button type="button" className="action-button action-button--light" onClick={clearZone}>
+                  <button type="button" className="action-button action-button--light" disabled={!cameraActive} onClick={clearZone}>
                     <EraserIcon />
                     Clear zone
                   </button>
@@ -1077,17 +1121,17 @@
                 <div className="field-pair">
                   <div className="field">
                     <label className="field__label" htmlFor="detectionWidth">Detection width</label>
-                    <input className="field__input" id="detectionWidth" name="detection_width" type="number" min="1" max={cameraState.global_max_resolution.width} value={form.detection_width} onChange={updateForm} required />
+                    <input className="field__input" id="detectionWidth" name="detection_width" type="number" min="1" max={cameraState.global_max_resolution.width} value={form.detection_width} onChange={updateForm} disabled={!cameraActive} required />
                   </div>
                   <div className="field">
                     <label className="field__label" htmlFor="detectionHeight">Detection height</label>
-                    <input className="field__input" id="detectionHeight" name="detection_height" type="number" min="1" max={cameraState.global_max_resolution.height} value={form.detection_height} onChange={updateForm} required />
+                    <input className="field__input" id="detectionHeight" name="detection_height" type="number" min="1" max={cameraState.global_max_resolution.height} value={form.detection_height} onChange={updateForm} disabled={!cameraActive} required />
                   </div>
                 </div>
 
                 <div className="field">
                   <label className="field__label" htmlFor="preprocessingMode">Detection target mode</label>
-                  <select className="field__input field__select" id="preprocessingMode" name="preprocessing_mode" value={form.preprocessing_mode} onChange={updateForm}>
+                  <select className="field__input field__select" id="preprocessingMode" name="preprocessing_mode" value={form.preprocessing_mode} onChange={updateForm} disabled={!cameraActive}>
                     <option value="fit">Fit full frame with letterboxing</option>
                     <option value="crop">Crop configured ROI, then letterbox</option>
                   </select>
@@ -1095,7 +1139,7 @@
 
                 <div className="camera-settings__footer">
                   <p className="camera__message">The global cap is deployment configuration and cannot be changed here. The worker reports source resolution after capturing a frame.</p>
-                  <button type="submit" className="action-button action-button--green" disabled={saving}>
+                  <button type="submit" className="action-button action-button--green" disabled={saving || !cameraActive}>
                     {saving ? 'Saving…' : 'Save camera settings'}
                   </button>
                 </div>

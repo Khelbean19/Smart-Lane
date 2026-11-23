@@ -61,7 +61,98 @@
 
     const LAMPS = ['red', 'yellow', 'green'];
 
-    const { useEffect, useRef, useState } = React;
+    const { useEffect, useLayoutEffect, useRef, useState } = React;
+
+    function calculateLetterboxedRect(containerRect, sourceResolution) {
+      if (!containerRect) return null;
+      const sourceRatio = sourceResolution?.width && sourceResolution?.height
+        ? sourceResolution.width / sourceResolution.height
+        : 16 / 9;
+      const frameRatio = containerRect.width / containerRect.height;
+      let width = containerRect.width;
+      let height = containerRect.height;
+      let left = 0;
+      let top = 0;
+      if (sourceRatio > frameRatio) {
+        height = containerRect.width / sourceRatio;
+        top = (containerRect.height - height) / 2;
+      } else {
+        width = containerRect.height * sourceRatio;
+        left = (containerRect.width - width) / 2;
+      }
+      return { left, top, width, height };
+    }
+
+    function LiveCameraPreview({ slot, isAdmin }) {
+      const previewRef = useRef(null);
+      const [contentRect, setContentRect] = useState(null);
+      const [intrinsicResolution, setIntrinsicResolution] = useState(null);
+      const sourceResolution = intrinsicResolution
+        || slot.preview_resolution
+        || slot.source_resolution;
+
+      useLayoutEffect(() => {
+        if (!previewRef.current) return undefined;
+        function updateContentRect() {
+          const rect = previewRef.current.getBoundingClientRect();
+          setContentRect(calculateLetterboxedRect(rect, sourceResolution));
+        }
+        updateContentRect();
+        const observer = new ResizeObserver(updateContentRect);
+        observer.observe(previewRef.current);
+        return () => observer.disconnect();
+      }, [slot.camera_id, sourceResolution?.width, sourceResolution?.height]);
+
+      function handleStreamLoad(event) {
+        const image = event.currentTarget;
+        if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+          setIntrinsicResolution({
+            width: image.naturalWidth,
+            height: image.naturalHeight,
+          });
+        }
+      }
+
+      return (
+        <div ref={previewRef} className="camera__view camera__view--wide">
+          {slot.camera_id !== null && slot.status === 'ONLINE'
+            ? (
+              <img
+                className="camera__stream"
+                src={`${VISION_WORKER_URL}/camera/${slot.camera_id}/stream`}
+                alt={`Live feed for ${slot.camera_name}`}
+                onLoad={handleStreamLoad}
+              />
+            )
+            : (
+              <div className="camera__empty">
+                {slot.camera_id !== null ? 'Camera feed unavailable' : 'No camera assigned'}
+              </div>
+            )}
+          {isAdmin && slot.camera_id !== null && slot.status === 'ONLINE'
+            && slot.detection_resolution && contentRect && (
+            <span
+              className="zone-box zone-box--detection"
+              style={slot.preprocessing_mode === 'crop' && slot.roi
+                ? {
+                  left: contentRect.left + slot.roi.x * contentRect.width,
+                  top: contentRect.top + slot.roi.y * contentRect.height,
+                  width: slot.roi.width * contentRect.width,
+                  height: slot.roi.height * contentRect.height,
+                }
+                : contentRect}
+            >
+              <span className="zone-box__label">
+                Detection input · {slot.detection_resolution.width} × {slot.detection_resolution.height} · {slot.preprocessing_mode}
+              </span>
+            </span>
+          )}
+          {isAdmin && slot.camera_id !== null && (
+            <span className="camera__tag">Source {slot.source}</span>
+          )}
+        </div>
+      );
+    }
 
     function LogoMark() {
       return (
@@ -466,6 +557,7 @@
                     ? 'badge--active'
                     : slot.status === 'FAULT' ? 'badge--wait' : 'badge--disabled';
                   const assigned = slot.camera_id !== null;
+                  const cameraActive = slot.status === 'ONLINE';
                   const selectedCamera = stagedAssignments[slot.slot_id] || '';
 
                   return (
@@ -481,43 +573,7 @@
                         </span>
                       </div>
 
-                      <div
-                        className="camera__view camera__view--wide"
-                      >
-                        {assigned && slot.status === 'ONLINE'
-                          ? (
-                            <img
-                              className="camera__stream"
-                              src={`${VISION_WORKER_URL}/camera/${slot.camera_id}/stream`}
-                              alt={`Live feed for ${slot.camera_name}`}
-                            />
-                          )
-                          : (
-                            <div className="camera__empty">
-                              {assigned ? 'Camera feed unavailable' : 'No camera assigned'}
-                            </div>
-                          )}
-                        {isAdmin && assigned && slot.status === 'ONLINE' && slot.detection_resolution && (
-                          <span
-                            className="zone-box zone-box--detection"
-                            style={slot.preprocessing_mode === 'crop' && slot.roi
-                              ? {
-                                left: `${slot.roi.x * 100}%`,
-                                top: `${slot.roi.y * 100}%`,
-                                width: `${slot.roi.width * 100}%`,
-                                height: `${slot.roi.height * 100}%`,
-                              }
-                              : { inset: 0 }}
-                          >
-                            <span className="zone-box__label">
-                              Detection input · {slot.detection_resolution.width} × {slot.detection_resolution.height} · {slot.preprocessing_mode}
-                            </span>
-                          </span>
-                        )}
-                        {isAdmin && assigned && (
-                          <span className="camera__tag">Source {slot.source}</span>
-                        )}
-                      </div>
+                      <LiveCameraPreview slot={slot} isAdmin={isAdmin} />
 
                       {isAdmin && assigned && (
                         <div className="camera-diagnostics" aria-label="Camera preprocessing diagnostics">
@@ -543,12 +599,22 @@
                             <strong>Detection target mode</strong>
                             <span>{slot.preprocessing_mode || 'Unavailable'}</span>
                           </p>
-                          <a
-                            className="action-button action-button--light camera-settings__link"
-                            href={`/settings?camera_id=${slot.camera_id}#camera-preprocessing`}
-                          >
-                            Configure camera
-                          </a>
+                          {cameraActive ? (
+                            <a
+                              className="action-button action-button--light camera-settings__link"
+                              href={`/settings?camera_id=${slot.camera_id}#camera-preprocessing`}
+                            >
+                              Configure camera
+                            </a>
+                          ) : (
+                            <span
+                              className="action-button action-button--light camera-settings__link"
+                              aria-disabled="true"
+                              title="Camera must be online before resolution settings can be configured"
+                            >
+                              Configure camera
+                            </span>
+                          )}
                         </div>
                       )}
 

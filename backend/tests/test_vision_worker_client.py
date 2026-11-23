@@ -42,6 +42,34 @@ def test_worker_client_restricts_url_to_loopback():
         VisionWorkerClient(base_url="http://example.com:8001", token="worker-secret")
 
 
+def test_worker_client_accepts_loopback_hostname_environment(monkeypatch):
+    monkeypatch.setenv("VISION_WORKER_HOST", "localhost")
+    monkeypatch.setenv("VISION_WORKER_PORT", "8001")
+    monkeypatch.setenv("VISION_WORKER_TOKEN", "worker-secret")
+
+    client = VisionWorkerClient()
+
+    assert client._base_url == "http://127.0.0.1:8001"
+
+
+@pytest.mark.parametrize("host", ["", "http://localhost", "example.com", "local host"])
+def test_worker_client_rejects_invalid_host_environment(monkeypatch, host):
+    monkeypatch.setenv("VISION_WORKER_HOST", host)
+    monkeypatch.setenv("VISION_WORKER_PORT", "8001")
+
+    with pytest.raises(VisionWorkerConfigurationError):
+        VisionWorkerClient()
+
+
+@pytest.mark.parametrize("post", ["", "not-a-port", "0", "65536"])
+def test_worker_client_rejects_invalid_post_environment(monkeypatch, post):
+    monkeypatch.setenv("VISION_WORKER_HOST", "localhost")
+    monkeypatch.setenv("VISION_WORKER_PORT", post)
+
+    with pytest.raises(VisionWorkerConfigurationError):
+        VisionWorkerClient()
+
+
 def test_worker_client_surfaces_unavailable_and_worker_errors():
     def unavailable(_request):
         raise httpx.ConnectError("connection refused")

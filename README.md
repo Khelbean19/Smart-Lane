@@ -68,7 +68,8 @@ Name the file to something like `.env.dev`.
 - POSTGRES_PORT - The port number exposed from the `docker run` command
 - AUTH_SECRET_KEY - A private signing key for API bearer tokens. Generate one with
   `python -c "import secrets; print(secrets.token_urlsafe(32))"` and keep it out of source control.
-- VISION_WORKER_URL - The worker control API URL; keep it on loopback (`http://127.0.0.1:8001`)
+- VISION_WORKER_HOST - The worker bind/client hostname; use `localhost` or `127.0.0.1`
+- VISION_WORKER_PORT - The worker bind/client TCP port; use `8001`
 - VISION_WORKER_TOKEN - A private shared bearer token for worker control. Generate one with
   `python -c "import secrets; print(secrets.token_urlsafe(32))"` and keep it out of source control.
 - VISION_MAX_FRAME_WIDTH and VISION_MAX_FRAME_HEIGHT - deployment-level maximum dimensions for
@@ -84,7 +85,8 @@ POSTGRES_DB=smartlane-db
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 AUTH_SECRET_KEY=replace-with-a-random-secret
-VISION_WORKER_URL=http://127.0.0.1:8001
+VISION_WORKER_HOST=localhost
+VISION_WORKER_PORT=8001
 VISION_WORKER_TOKEN=replace-with-another-random-secret
 VISION_MAX_FRAME_WIDTH=1280
 VISION_MAX_FRAME_HEIGHT=720
@@ -132,7 +134,7 @@ The worker accepts a database-provided camera registry through its authenticated
 `PUT /api/v1/cameras/reconcile` endpoint. Camera IDs are database IDs; each camera source may be a
 numeric device index or a stream URL.
 
-FastAPI uses `VISION_WORKER_URL` and `VISION_WORKER_TOKEN` to call the worker's versioned control
+FastAPI uses `VISION_WORKER_HOST`, `VISION_WORKER_PORT`, and `VISION_WORKER_TOKEN` to call the worker's versioned control
 API. The worker validates the shared bearer token. Keep the token secret and consistent in the
 environment used by both processes. The worker's loopback binding is not a boundary against other
 web pages or processes running on the same machine. The frontend and camera worker must run on the

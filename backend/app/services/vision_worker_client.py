@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import re
 from urllib.parse import urlsplit
 from typing import Any
 
 import httpx
+import loguru
 
 
 class VisionWorkerError(RuntimeError):
@@ -33,26 +35,68 @@ class VisionWorkerProtocolError(VisionWorkerError):
     """The worker returned a response that was not valid JSON."""
 
 
+def _validate_worker_host(value: str) -> str:
+    host = value.strip()
+    if not host:
+        raise VisionWorkerConfigurationError(
+            "VISION_WORKER_HOST must be a non-empty hostname."
+        )
+    if (
+        "://" in host
+        or any(character in host for character in "/?#@")
+        or ":" in host
+        or not re.fullmatch(r"[A-Za-z0-9._-]+", host)
+    ):
+        raise VisionWorkerConfigurationError(
+            "VISION_WORKER_HOST must be a hostname, not a URL."
+        )
+    if host.lower() not in ("localhost", "127.0.0.1", "::1"):
+        raise VisionWorkerConfigurationError(
+            "VISION_WORKER_HOST must use a loopback hostname."
+        )
+    return "127.0.0.1" if host.lower() == "localhost" else host
+
+
+def _validate_worker_post(value: str) -> int:
+    try:
+        port = int(value.strip())
+    except (AttributeError, TypeError, ValueError) as error:
+        raise VisionWorkerConfigurationError(
+            "VISION_WORKER_PORT must be an integer from 1 to 65535."
+        ) from error
+    if not 1 <= port <= 65535:
+        raise VisionWorkerConfigurationError(
+            "VISION_WORKER_PORT must be an integer from 1 to 65535."
+        )
+    return port
+
+
 def _validate_base_url(value: str) -> str:
+    if "://" not in value:
+        raise VisionWorkerConfigurationError(
+            "VISION_WORKER_HOST must be configured as a hostname."
+        )
     try:
         parsed = urlsplit(value)
         hostname = parsed.hostname
-        parsed.port
+        port = parsed.port
     except ValueError as error:
         raise VisionWorkerConfigurationError(
-            "VISION_WORKER_URL is malformed."
+            "Worker base URL is malformed."
         ) from error
     if (
         parsed.scheme != "http"
-        or hostname != "127.0.0.1"
+        or hostname not in ("localhost", "127.0.0.1", "::1")
         or parsed.username is not None
         or parsed.password is not None
         or parsed.query
         or parsed.fragment
         or parsed.path not in ("", "/")
+        or port is None
+        or not 1 <= port <= 65535
     ):
         raise VisionWorkerConfigurationError(
-            "VISION_WORKER_URL must use http://127.0.0.1 without a path."
+            "Worker base URL must be a loopback HTTP URL with a valid port."
         )
     return value.rstrip("/")
 
@@ -65,9 +109,26 @@ class VisionWorkerClient:
         transport: httpx.AsyncBaseTransport | None = None,
         timeout: float = 15.0,
     ) -> None:
-        self._base_url = _validate_base_url(
-            base_url or os.getenv("VISION_WORKER_URL", "http://127.0.0.1:8001")
-        )
+        if base_url is not None:
+            self._base_url = _validate_base_url(base_url)
+            self._token = token if token is not None else os.getenv("VISION_WORKER_TOKEN", "")
+            self._transport = transport
+            self._timeout = timeout
+            return
+
+        _vision_host = os.getenv("VISION_WORKER_HOST")
+        _vision_post = os.getenv("VISION_WORKER_PORT")
+        if not _vision_host:
+            raise VisionWorkerConfigurationError(
+                "VISION_WORKER_HOST is not configured."
+            )
+        if not _vision_post:
+            raise VisionWorkerConfigurationError(
+                "VISION_WORKER_PORT is not configured."
+            )
+        host = _validate_worker_host(_vision_host)
+        port = _validate_worker_post(_vision_post)
+        self._base_url = f"http://{host}:{port}"
         self._token = token if token is not None else os.getenv("VISION_WORKER_TOKEN", "")
         self._transport = transport
         self._timeout = timeout
