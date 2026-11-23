@@ -1,0 +1,1 @@
+uv run --env-file .env.dev python -m backend.app.vision.worker
