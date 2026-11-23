@@ -20,11 +20,13 @@
   <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+  <script src="/session.js"></script>
+  <script src="/clock.js"></script>
 
   <script type="text/babel">
 
     /* 
-    BACKEND: Lahat ng data sa page nato galing sa constants sa baba (EMERGENCY, SIGNALS, DECISION, CAMERAS, DETECTIONS, MODES).
+    BACKEND: Lahat ng data sa page nato galing sa constants sa baba (EMERGENCY, SIGNALS, DECISION, DETECTIONS, MODES).
     REPLACE NYO YUNG CONSTANTS. DUN NYO ILAGAY YUNG API DATA.*/ 
     // BACKEND: EMERGENCY - Pag active: true magiging red yung banner. Yung title and text ay strings lang.
     const EMERGENCY = {
@@ -42,35 +44,6 @@
     // BACKEND: DECISION - Yung seconds ay natitirang seconds bago mag change ng decision. Yung progress ay number from 0 to 100 para sa bar.
     const DECISION = { direction: 'A: North → B: South', pairing: '2W + 2W', seconds: 18, progress: 35 };
 
-    // BACKEND: CAMERAS - isa per camera. Yung boxes ay yung detections sa preview, type ay '2w' or '4w'. Yung left, top, width, height ay percent (0 to 100) ng preview, hindi pixels.
-    const CAMERAS = [
-      {
-        id: 'a',
-        name: 'Camera A · North end',
-        tag: 'USB A / North · Simulated preview',
-        stamp: '2026-10-14 15:24:08',
-        size: '1280 × 720 · 24 fps',
-        last: 'Last: 4W · car · 98.4%',
-        lastTime: '15:24:08 PHT',
-        boxes: [
-          { id: 1, type: '2w', label: '2W · motorcycle · 96.7%', left: 37, top: 12, width: 9, height: 28 },
-          { id: 2, type: '4w', label: '4W · car · 98.4%', left: 32, top: 46, width: 16, height: 40 },
-        ],
-      },
-      {
-        id: 'b',
-        name: 'Camera B · South end',
-        tag: 'USB B / South · Simulated preview',
-        stamp: '2026-10-14 15:24:08',
-        size: '1280 × 720 · 24 fps',
-        last: 'Last: 2W · bicycle · 96.2%',
-        lastTime: '15:24:06 PHT',
-        boxes: [
-          { id: 1, type: '2w', label: '2W · bicycle · 96.2%', left: 52, top: 13, width: 13, height: 44 },
-        ],
-      },
-    ];
-
     // BACKEND: DETECTIONS - latest detections, newest first (alam nyo nayan). Gawin nyong unique yung id (eto gagamitin as row key). YUNG decision kailangan exactly 'Go' or 'Wait' kase it picks the badge color. Yung time is HH:MM:SS in PHT.
     const DETECTIONS = [
       { id: 1, time: '15:24:08', end: 'A / North', vehicle: '4W · car', confidence: '98.4%', decision: 'Go' },
@@ -84,10 +57,102 @@
 
     // BACKEND: MODES - 'Manual' or 'Automatic' lang to.
     const MODES = ['Manual', 'Automatic'];
+    const VISION_WORKER_URL = 'http://127.0.0.1:8001';
 
     const LAMPS = ['red', 'yellow', 'green'];
 
-    const { useState } = React;
+    const { useEffect, useLayoutEffect, useRef, useState } = React;
+
+    function calculateLetterboxedRect(containerRect, sourceResolution) {
+      if (!containerRect) return null;
+      const sourceRatio = sourceResolution?.width && sourceResolution?.height
+        ? sourceResolution.width / sourceResolution.height
+        : 16 / 9;
+      const frameRatio = containerRect.width / containerRect.height;
+      let width = containerRect.width;
+      let height = containerRect.height;
+      let left = 0;
+      let top = 0;
+      if (sourceRatio > frameRatio) {
+        height = containerRect.width / sourceRatio;
+        top = (containerRect.height - height) / 2;
+      } else {
+        width = containerRect.height * sourceRatio;
+        left = (containerRect.width - width) / 2;
+      }
+      return { left, top, width, height };
+    }
+
+    function LiveCameraPreview({ slot, isAdmin }) {
+      const previewRef = useRef(null);
+      const [contentRect, setContentRect] = useState(null);
+      const [intrinsicResolution, setIntrinsicResolution] = useState(null);
+      const sourceResolution = intrinsicResolution
+        || slot.preview_resolution
+        || slot.source_resolution;
+
+      useLayoutEffect(() => {
+        if (!previewRef.current) return undefined;
+        function updateContentRect() {
+          const rect = previewRef.current.getBoundingClientRect();
+          setContentRect(calculateLetterboxedRect(rect, sourceResolution));
+        }
+        updateContentRect();
+        const observer = new ResizeObserver(updateContentRect);
+        observer.observe(previewRef.current);
+        return () => observer.disconnect();
+      }, [slot.camera_id, sourceResolution?.width, sourceResolution?.height]);
+
+      function handleStreamLoad(event) {
+        const image = event.currentTarget;
+        if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+          setIntrinsicResolution({
+            width: image.naturalWidth,
+            height: image.naturalHeight,
+          });
+        }
+      }
+
+      return (
+        <div ref={previewRef} className="camera__view camera__view--wide">
+          {slot.camera_id !== null && slot.status === 'ONLINE'
+            ? (
+              <img
+                className="camera__stream"
+                src={`${VISION_WORKER_URL}/camera/${slot.camera_id}/stream`}
+                alt={`Live feed for ${slot.camera_name}`}
+                onLoad={handleStreamLoad}
+              />
+            )
+            : (
+              <div className="camera__empty">
+                {slot.camera_id !== null ? 'Camera feed unavailable' : 'No camera assigned'}
+              </div>
+            )}
+          {isAdmin && slot.camera_id !== null && slot.status === 'ONLINE'
+            && slot.detection_resolution && contentRect && (
+            <span
+              className="zone-box zone-box--detection"
+              style={slot.preprocessing_mode === 'crop' && slot.roi
+                ? {
+                  left: contentRect.left + slot.roi.x * contentRect.width,
+                  top: contentRect.top + slot.roi.y * contentRect.height,
+                  width: slot.roi.width * contentRect.width,
+                  height: slot.roi.height * contentRect.height,
+                }
+                : contentRect}
+            >
+              <span className="zone-box__label">
+                Detection input · {slot.detection_resolution.width} × {slot.detection_resolution.height} · {slot.preprocessing_mode}
+              </span>
+            </span>
+          )}
+          {isAdmin && slot.camera_id !== null && (
+            <span className="camera__tag">Source {slot.source}</span>
+          )}
+        </div>
+      );
+    }
 
     function LogoMark() {
       return (
@@ -276,15 +341,34 @@
     }
 
     const NAV_ITEMS = [
-      { label: 'Dashboard', icon: <DashboardIcon />, active: false },
-      { label: 'Live control', icon: <LiveIcon />, active: true },
-      { label: 'Reports', icon: <ReportsIcon />, active: false },
-      { label: 'Users', icon: <UsersIcon />, active: false },
-      { label: 'Settings', icon: <SettingsIcon />, active: false },
+      { label: 'Dashboard', href: '/dashboard', icon: <DashboardIcon />, active: false },
+      { label: 'Live control', href: '/live', icon: <LiveIcon />, active: true },
+      { label: 'Reports', href: '/reports', icon: <ReportsIcon />, active: false },
+      { label: 'Users', href: '/users', icon: <UsersIcon />, active: false },
+      { label: 'Settings', href: '/settings', icon: <SettingsIcon />, active: false },
     ];
 
 
-    function Sidebar() {
+    function Sidebar({ onUserLoaded }) {
+      const [currentUser, setCurrentUser] = useState(null);
+      const [profileError, setProfileError] = useState(false);
+
+      useEffect(() => {
+        let isMounted = true;
+        window.smartLaneSession.getCurrentUser()
+          .then((user) => {
+            if (isMounted && user) {
+              setCurrentUser(user);
+              onUserLoaded(user);
+            }
+          })
+          .catch((error) => {
+            console.error(error);
+            if (isMounted) setProfileError(true);
+          });
+        return () => { isMounted = false; };
+      }, []);
+
       return (
         <aside className="sidebar">
           <header className="brand brand--sidebar">
@@ -298,15 +382,11 @@
           <p className="sidebar__label">Operations workspace</p>
 
           <nav className="nav">
-            {/* 
-              BACKEND: LAHAT ng nav links ay "#" for now. 
-              Bigyan nyo lahat ng item ng real route and tas i set active nyo sa current page. 
-            */}
             {NAV_ITEMS.map((item) => (
               <a
                 key={item.label}
                 className={`nav__item${item.active ? ' is-active' : ''}`}
-                href="#"
+                href={item.href}
               >
                 {item.icon}
                 <span>{item.label}</span>
@@ -317,14 +397,20 @@
 
           <footer className="sidebar__footer">
             <div className="user">
-              <span className="user__avatar">IT</span>
+              <span className="user__avatar">
+                {currentUser ? window.smartLaneSession.getInitials(currentUser) : ''}
+              </span>
               <span className="user__info">
-                <span className="user__name">Irene Ticzon</span>
-                <span className="user__role">Administrator</span>
+                <span className="user__name">
+                  {currentUser ? currentUser.full_name : profileError ? 'Profile unavailable' : 'Loading profile...'}
+                </span>
+                <span className="user__role">
+                  {currentUser ? window.smartLaneSession.formatRole(currentUser.role) : ''}
+                </span>
               </span>
             </div>
           
-            <button type="button" className="logout">
+            <button type="button" className="logout" onClick={window.smartLaneSession.logout}>
               <LogoutIcon />
               Logout
             </button>
@@ -335,6 +421,18 @@
 
 
     function Topbar() {
+      const [currentTime, setCurrentTime] = useState(
+        () => window.smartLaneClock.format(new Date()),
+      );
+
+      useEffect(() => {
+        const timer = window.setInterval(
+          () => setCurrentTime(window.smartLaneClock.format(new Date())),
+          1000,
+        );
+        return () => window.clearInterval(timer);
+      }, []);
+
       return (
         <header className="topbar">
           <h1 className="topbar__title">Live control</h1>
@@ -346,7 +444,7 @@
               Today
             </button>
 
-            <p className="topbar__time">14 Oct 2026 · 15:24:08 PHT</p>
+            <p className="topbar__time">{currentTime}</p>
 
             <p className="badge badge--online">
               <span className="badge__dot" />
@@ -426,53 +524,147 @@
     }
 
 
-    function CameraPanels() {
+    function CameraPanels({
+      cameraState,
+      loading,
+      error,
+      stagedAssignments,
+      dirty,
+      saving,
+      isAdmin,
+      onSelectionChange,
+      onApply,
+    }) {
       return (
-        <section className="camera-grid">
-          {CAMERAS.map((camera) => (
-            <article key={camera.id} className="panel">
-              <div className="panel__header panel__header--center">
-                <h2 className="panel__title">{camera.name}</h2>
-                <span className="badge badge--live">
-                  <span className="badge__dot" />
-                  Live
-                </span>
-              </div>
+        <section className="camera-section">
+          {loading && <p className="camera__message">Loading camera slots…</p>}
+          {error && <p className="camera__message camera__message--error" role="alert">{error}</p>}
+          {cameraState && (
+            <>
+              {cameraState.worker_error && (
+                <p className="camera__message camera__message--error" role="status">
+                  Vision worker unavailable: {cameraState.worker_error}
+                </p>
+              )}
+              {cameraState.activation_errors.map((item) => (
+                <p key={item.camera_id} className="camera__message camera__message--error" role="status">
+                  Camera {item.camera_id}: {item.error}
+                </p>
+              ))}
+              <section className="camera-grid">
+                {cameraState.slots.map((slot) => {
+                  const statusClass = slot.status === 'ONLINE'
+                    ? 'badge--active'
+                    : slot.status === 'FAULT' ? 'badge--wait' : 'badge--disabled';
+                  const assigned = slot.camera_id !== null;
+                  const cameraActive = slot.status === 'ONLINE';
+                  const selectedCamera = stagedAssignments[slot.slot_id] || '';
 
-              {/* 
-                BACKEND: Dito yung live camera feed. Pwede nyong palitan yung laman ng camera__view ng <video> or <img> stream.
-                Yung detect-box ay naka percent (0 to 100) ng preview kaya i convert nyo lang yung bounding boxes.
-              */}
-              <div className="camera__view">
-                <span className="camera__lane camera__lane--left" />
-                <span className="camera__lane camera__lane--center" />
-                <span className="camera__lane camera__lane--right" />
-                <span className="camera__tag">{camera.tag}</span>
-                {camera.boxes.map((box) => (
-                  <span
-                    key={box.id}
-                    className={`detect-box detect-box--${box.type}`}
-                    style={{
-                      left: `${box.left}%`,
-                      top: `${box.top}%`,
-                      width: `${box.width}%`,
-                      height: `${box.height}%`,
-                    }}
+                  return (
+                    <article key={slot.slot_id} className="panel">
+                      <div className="panel__header panel__header--center">
+                        <div>
+                          <h2 className="panel__title">{slot.camera_name || 'Camera slot'}</h2>
+                          <p className="panel__subtitle">{slot.region}</p>
+                        </div>
+                        <span className={`badge ${statusClass}`}>
+                          <span className="badge__dot" />
+                          {slot.status}
+                        </span>
+                      </div>
+
+                      <LiveCameraPreview slot={slot} isAdmin={isAdmin} />
+
+                      {isAdmin && assigned && (
+                        <div className="camera-diagnostics" aria-label="Camera preprocessing diagnostics">
+                          <p>
+                            <strong>Global cap</strong>
+                            <span>{cameraState.global_max_resolution
+                              ? `${cameraState.global_max_resolution.width} × ${cameraState.global_max_resolution.height}`
+                              : 'Unavailable'}</span>
+                          </p>
+                          <p>
+                            <strong>Source resolution</strong>
+                            <span>{slot.source_resolution
+                              ? `${slot.source_resolution.width} × ${slot.source_resolution.height}`
+                              : 'Unavailable until the first frame'}</span>
+                          </p>
+                          <p>
+                            <strong>Detection resolution</strong>
+                            <span>{slot.detection_resolution
+                              ? `${slot.detection_resolution.width} × ${slot.detection_resolution.height}`
+                              : 'Unavailable'}</span>
+                          </p>
+                          <p>
+                            <strong>Detection target mode</strong>
+                            <span>{slot.preprocessing_mode || 'Unavailable'}</span>
+                          </p>
+                          {cameraActive ? (
+                            <a
+                              className="action-button action-button--light camera-settings__link"
+                              href={`/settings?camera_id=${slot.camera_id}#camera-preprocessing`}
+                            >
+                              Configure camera
+                            </a>
+                          ) : (
+                            <span
+                              className="action-button action-button--light camera-settings__link"
+                              aria-disabled="true"
+                              title="Camera must be online before resolution settings can be configured"
+                            >
+                              Configure camera
+                            </span>
+                          )}
+                        </div>
+                      )}
+
+                      {isAdmin && (
+                        <label className="camera-slot__label">
+                          Camera for {slot.region}
+                          <select
+                            className="camera-slot__select"
+                            value={selectedCamera}
+                            onChange={(event) => onSelectionChange(slot.slot_id, event.target.value)}
+                            disabled={saving}
+                          >
+                            <option value="">Inactive — no camera</option>
+                            {cameraState.cameras.map((camera) => {
+                              const chosenElsewhere = cameraState.slots.some(
+                                (otherSlot) =>
+                                  otherSlot.slot_id !== slot.slot_id
+                                  && stagedAssignments[otherSlot.slot_id] === String(camera.camera_id),
+                              );
+                              return (
+                                <option
+                                  key={camera.camera_id}
+                                  value={String(camera.camera_id)}
+                                  disabled={chosenElsewhere}
+                                >
+                                  {camera.camera_name} · {camera.region} · Source {camera.source} · {camera.status}
+                                </option>
+                              );
+                            })}
+                          </select>
+                        </label>
+                      )}
+                    </article>
+                  );
+                })}
+              </section>
+              {isAdmin && (
+                <div className="camera-slot__actions">
+                  <button
+                    type="button"
+                    className="action-button action-button--teal"
+                    disabled={!dirty || saving}
+                    onClick={onApply}
                   >
-                    <span className="detect-box__vehicle" />
-                    <span className="detect-box__label">{box.label}</span>
-                  </span>
-                ))}
-                <span className="camera__stamp">{camera.stamp}</span>
-                <span className="camera__size">{camera.size}</span>
-              </div>
-
-              <p className="camera__last">
-                <span>{camera.last}</span>
-                <span>{camera.lastTime}</span>
-              </p>
-            </article>
-          ))}
+                    {saving ? 'Applying camera setup…' : 'Apply camera setup'}
+                  </button>
+                </div>
+              )}
+            </>
+          )}
         </section>
       );
     }
@@ -555,7 +747,7 @@
         <section className="panel">
           <div className="panel__header panel__header--center">
             <h2 className="panel__title">Live detections</h2>
-            <a className="text-link text-link--small" href="#detections">
+            <a className="text-link text-link--small" href="/reports">
               View all detections
               <ArrowIcon />
             </a>
@@ -596,15 +788,135 @@
 
 
     function App() {
+      const [currentUser, setCurrentUser] = useState(null);
+      const [cameraState, setCameraState] = useState(null);
+      const [stagedAssignments, setStagedAssignments] = useState({});
+      const [cameraLoading, setCameraLoading] = useState(true);
+      const [cameraSaving, setCameraSaving] = useState(false);
+      const [cameraError, setCameraError] = useState('');
+      const hasUnsavedChanges = useRef(false);
+
+      useEffect(() => {
+        let isMounted = true;
+        let isInitialLoad = true;
+
+        async function refreshCameraSlots() {
+          try {
+            const response = await window.smartLaneSession.authenticatedFetch(
+              '/api/v1/vision/camera-slots',
+            );
+            const body = await response.json();
+            if (!response.ok) {
+              throw new Error(body.detail || `Could not load camera slots (HTTP ${response.status}).`);
+            }
+            if (!isMounted) return;
+            setCameraState(body);
+            setCameraError('');
+            if (!hasUnsavedChanges.current) {
+              setStagedAssignments(Object.fromEntries(
+                body.slots.map((slot) => [
+                  slot.slot_id,
+                  slot.camera_id === null ? '' : String(slot.camera_id),
+                ]),
+              ));
+            }
+          } catch (loadError) {
+            console.error(loadError);
+            if (isMounted) setCameraError(loadError.message);
+          } finally {
+            if (isMounted && isInitialLoad) {
+              setCameraLoading(false);
+              isInitialLoad = false;
+            }
+          }
+        }
+
+        refreshCameraSlots();
+        const timer = window.setInterval(refreshCameraSlots, 10000);
+        return () => {
+          isMounted = false;
+          window.clearInterval(timer);
+        };
+      }, []);
+
+      const dirty = Boolean(cameraState) && cameraState.slots.some((slot) => (
+        (stagedAssignments[slot.slot_id] || '')
+        !== (slot.camera_id === null ? '' : String(slot.camera_id))
+      ));
+
+      useEffect(() => {
+        hasUnsavedChanges.current = dirty;
+      }, [dirty]);
+
+      function updateStagedAssignment(slotId, cameraId) {
+        setStagedAssignments((previous) => ({
+          ...previous,
+          [slotId]: cameraId,
+        }));
+      }
+
+      async function applyCameraSetup() {
+        if (!dirty || !window.confirm(
+          'Applying this camera setup may stop or restart camera streams. Continue?',
+        )) return;
+
+        setCameraSaving(true);
+        setCameraError('');
+        try {
+          const response = await window.smartLaneSession.authenticatedFetch(
+            '/api/v1/vision/camera-slots',
+            {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                assignments: cameraState.slots.map((slot) => ({
+                  slot_id: slot.slot_id,
+                  camera_id: stagedAssignments[slot.slot_id]
+                    ? Number(stagedAssignments[slot.slot_id])
+                    : null,
+                })),
+              }),
+            },
+          );
+          const body = await response.json();
+          if (!response.ok) {
+            throw new Error(body.detail || `Could not apply camera setup (HTTP ${response.status}).`);
+          }
+          setCameraState(body);
+          setStagedAssignments(Object.fromEntries(
+            body.slots.map((slot) => [
+              slot.slot_id,
+              slot.camera_id === null ? '' : String(slot.camera_id),
+            ]),
+          ));
+          hasUnsavedChanges.current = false;
+        } catch (saveError) {
+          console.error(saveError);
+          setCameraError(saveError.message);
+        } finally {
+          setCameraSaving(false);
+        }
+      }
+
       return (
         <div className="page page--dashboard">
-          <Sidebar />
+          <Sidebar onUserLoaded={setCurrentUser} />
           <main className="main">
             <Topbar />
             <div className="content">
               <EmergencyBanner />
               <SignalCards />
-              <CameraPanels />
+              <CameraPanels
+                cameraState={cameraState}
+                loading={cameraLoading}
+                error={cameraError}
+                stagedAssignments={stagedAssignments}
+                dirty={dirty}
+                saving={cameraSaving}
+                isAdmin={currentUser && currentUser.role === 'ADMINISTRATOR'}
+                onSelectionChange={updateStagedAssignment}
+                onApply={applyCameraSetup}
+              />
               <div className="split split--right">
                 <ManualControl />
                 <LiveDetections />

@@ -1,7 +1,7 @@
 -- =====================================================================
 -- SmartLane (Vision Vanguard) - PostgreSQL schema
 -- Laboratory #9: Software Design Modeling
--- Target: PostgreSQL 13+ (uses built-in gen_random_uuid()), pgAdmin 4
+-- Target: PostgreSQL 18 (uses built-in gen_random_uuid()), pgAdmin 4
 --
 -- How to run: create/select an empty database, open Query Tool,
 -- paste or open this file, then press F5 (Execute).
@@ -12,7 +12,7 @@
 -- ---------------------------------------------------------------------
 -- DROP TABLE IF EXISTS report_exports, audit_logs, system_settings,
 --     override_logs, emergency_events, alert_logs, signal_logs,
---     pairing_rules, detection_events, cameras, vehicle_classes,
+--     camera_assignments, pairing_rules, detection_events, cameras, vehicle_classes,
 --     road_ends, users CASCADE;
 -- DROP TYPE IF EXISTS user_role, user_status, camera_status, signal_mode,
 --     override_action, alert_status, setting_value_type, audit_action CASCADE;
@@ -67,9 +67,35 @@ CREATE TABLE cameras (
                    REFERENCES road_ends (road_end_id),
     source         TEXT          NOT NULL,              -- USB index or stream URL
     status         camera_status NOT NULL,
-    last_frame_at  TIMESTAMP                            -- for fault check
+    last_frame_at  TIMESTAMP,                           -- for fault check
+    detection_width INTEGER NOT NULL DEFAULT 640,
+    detection_height INTEGER NOT NULL DEFAULT 480,
+    preprocessing_mode TEXT NOT NULL DEFAULT 'fit'
+                   CHECK (preprocessing_mode IN ('fit', 'crop')),
+    roi_x          DOUBLE PRECISION NOT NULL DEFAULT 0
+                   CHECK (roi_x >= 0 AND roi_x <= 1),
+    roi_y          DOUBLE PRECISION NOT NULL DEFAULT 0
+                   CHECK (roi_y >= 0 AND roi_y <= 1),
+    roi_width      DOUBLE PRECISION NOT NULL DEFAULT 1
+                   CHECK (roi_width > 0 AND roi_width <= 1),
+    roi_height     DOUBLE PRECISION NOT NULL DEFAULT 1
+                   CHECK (roi_height > 0 AND roi_height <= 1),
+    CONSTRAINT ck_cameras_detection_dimensions
+        CHECK (detection_width > 0 AND detection_height > 0),
+    CONSTRAINT ck_cameras_roi_bounds
+        CHECK (roi_x + roi_width <= 1 AND roi_y + roi_height <= 1)
 );
-COMMENT ON TABLE cameras IS 'All registered cameras in the system network (dedicated table for future scalability).';
+COMMENT ON TABLE cameras IS 'Registered cameras and their per-camera inference preprocessing settings.';
+
+CREATE TABLE camera_assignments (
+    road_end_id  INTEGER   PRIMARY KEY
+                 REFERENCES road_ends (road_end_id) ON DELETE CASCADE,
+    camera_id    INTEGER   NOT NULL UNIQUE
+                 REFERENCES cameras (camera_id) ON DELETE RESTRICT,
+    updated_by   UUID      REFERENCES users (user_id),
+    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+COMMENT ON TABLE camera_assignments IS 'Desired camera selection for each live camera slot; camera status separately records runtime health.';
 
 -- Table 4. VehicleClasses ---------------------------------------------
 CREATE TABLE vehicle_classes (

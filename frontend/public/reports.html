@@ -20,6 +20,8 @@
   <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+  <script src="/session.js"></script>
+  <script src="/clock.js"></script>
 
   <script type="text/babel">
 
@@ -84,7 +86,7 @@
     // BACKEND: PAGINATION - showing at total ay para sa "Showing 1-6 of 1,240 events". Yung pages ay list ng page numbers, current ay yung active page.
     const PAGINATION = { showing: '1–6', total: '1,240', pages: [1, 2], current: 1 };
 
-    const { useState } = React;
+    const { useEffect, useState } = React;
 
     function LogoMark() {
       return (
@@ -232,15 +234,31 @@
     }
 
     const NAV_ITEMS = [
-      { label: 'Dashboard', icon: <DashboardIcon />, active: false },
-      { label: 'Live control', icon: <LiveIcon />, active: false },
-      { label: 'Reports', icon: <ReportsIcon />, active: true },
-      { label: 'Users', icon: <UsersIcon />, active: false },
-      { label: 'Settings', icon: <SettingsIcon />, active: false },
+      { label: 'Dashboard', href: '/dashboard', icon: <DashboardIcon />, active: false },
+      { label: 'Live control', href: '/live', icon: <LiveIcon />, active: false },
+      { label: 'Reports', href: '/reports', icon: <ReportsIcon />, active: true },
+      { label: 'Users', href: '/users', icon: <UsersIcon />, active: false },
+      { label: 'Settings', href: '/settings', icon: <SettingsIcon />, active: false },
     ];
 
 
     function Sidebar() {
+      const [currentUser, setCurrentUser] = useState(null);
+      const [profileError, setProfileError] = useState(false);
+
+      useEffect(() => {
+        let isMounted = true;
+        window.smartLaneSession.getCurrentUser()
+          .then((user) => {
+            if (isMounted && user) setCurrentUser(user);
+          })
+          .catch((error) => {
+            console.error(error);
+            if (isMounted) setProfileError(true);
+          });
+        return () => { isMounted = false; };
+      }, []);
+
       return (
         <aside className="sidebar">
           <header className="brand brand--sidebar">
@@ -254,15 +272,11 @@
           <p className="sidebar__label">Operations workspace</p>
 
           <nav className="nav">
-            {/* 
-              BACKEND: LAHAT ng nav links ay "#" for now. 
-              Bigyan nyo lahat ng item ng real route and tas i set active nyo sa current page. 
-            */}
             {NAV_ITEMS.map((item) => (
               <a
                 key={item.label}
                 className={`nav__item${item.active ? ' is-active' : ''}`}
-                href="#"
+                href={item.href}
               >
                 {item.icon}
                 <span>{item.label}</span>
@@ -273,14 +287,20 @@
 
           <footer className="sidebar__footer">
             <div className="user">
-              <span className="user__avatar">IT</span>
+              <span className="user__avatar">
+                {currentUser ? window.smartLaneSession.getInitials(currentUser) : ''}
+              </span>
               <span className="user__info">
-                <span className="user__name">Irene Ticzon</span>
-                <span className="user__role">Administrator</span>
+                <span className="user__name">
+                  {currentUser ? currentUser.full_name : profileError ? 'Profile unavailable' : 'Loading profile...'}
+                </span>
+                <span className="user__role">
+                  {currentUser ? window.smartLaneSession.formatRole(currentUser.role) : ''}
+                </span>
               </span>
             </div>
           
-            <button type="button" className="logout">
+            <button type="button" className="logout" onClick={window.smartLaneSession.logout}>
               <LogoutIcon />
               Logout
             </button>
@@ -291,6 +311,18 @@
 
 
     function Topbar() {
+      const [currentTime, setCurrentTime] = useState(
+        () => window.smartLaneClock.format(new Date()),
+      );
+
+      useEffect(() => {
+        const timer = window.setInterval(
+          () => setCurrentTime(window.smartLaneClock.format(new Date())),
+          1000,
+        );
+        return () => window.clearInterval(timer);
+      }, []);
+
       return (
         <header className="topbar">
           <h1 className="topbar__title">Reports</h1>
@@ -302,7 +334,7 @@
               Today
             </button>
 
-            <p className="topbar__time">14 Oct 2026 · 15:24:08 PHT</p>
+            <p className="topbar__time">{currentTime}</p>
 
             <p className="badge badge--online">
               <span className="badge__dot" />

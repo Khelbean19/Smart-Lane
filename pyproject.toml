@@ -16,6 +16,10 @@ dependencies = [
     "ultralytics",
     "reportlab",
     "pytest",
+    "loguru>=0.8.0",
+    "python-dotenv>=1.2.4",
+    "argon2-cffi>=25.1.0",
+    "cv2-enumerate-cameras>=1.4.0",
 ]
 [tool.fastapi]
 entrypoint="backend.app.main:app"

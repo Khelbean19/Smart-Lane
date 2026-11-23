@@ -20,9 +20,10 @@
   <script crossorigin src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone@7.25.6/babel.min.js"></script>
+  <script src="/session.js"></script>
 
   <script type="text/babel">
-    const { useState } = React;
+    const { useEffect, useState } = React;
 
 
     function LogoMark() {
@@ -179,6 +180,23 @@
       // Eto gamitin nyo pag mag se send login request.
       const [values, setValues] = useState({ username: '', password: '', remember: false });
       const [showPassword, setShowPassword] = useState(false);
+      const [errorMessage, setErrorMessage] = useState('');
+      const [isSubmitting, setIsSubmitting] = useState(false);
+
+      useEffect(() => {
+        let isMounted = true;
+        window.smartLaneSession.getCurrentUser({ redirectOnUnauthorized: false })
+          .then((user) => {
+            if (isMounted && user) window.location.replace('/dashboard');
+          })
+          .catch((error) => {
+            console.error(error);
+            if (isMounted) {
+              setErrorMessage('Unable to verify your current sign-in. Please try again.');
+            }
+          });
+        return () => { isMounted = false; };
+      }, []);
 
       const handleChange = (event) => {
         const { name, type, value, checked } = event.target;
@@ -188,12 +206,43 @@
         }));
       };
 
-      const handleSubmit = (event) => {
+      const handleSubmit = async (event) => {
         event.preventDefault();
-        // LOU or STEPH: ise send nyo yung values.username, values.password and values.remember sa login endpoint dito.
-        // LOU or STEPH: Pag success redirect sa dashboard.html. On failure show an error message (Alam nyo nayan basic error handling lang yan).
+        setErrorMessage('');
+        setIsSubmitting(true);
+        try {
+          const response = await fetch("/api/v1/auth/", {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
 
+            body: JSON.stringify({
+              "username": values.username,
+              "password": values.password,
+              "remember": values.remember,
+            })
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.detail || `Sign-in failed (HTTP ${response.status}).`);
+          }
 
+          if (typeof data.access_token !== 'string' || !data.access_token) {
+            throw new Error('Authentication response did not include an access token.');
+          }
+
+          window.smartLaneSession.saveAccessToken(
+            data.access_token,
+            values.remember,
+            data.expires_in,
+          );
+          window.location.replace('/dashboard');
+        } catch (error) {
+          setErrorMessage(error.message || 'Unable to sign in. Please try again.');
+        } finally {
+          setIsSubmitting(false);
+        }
       };
 
       return (
@@ -202,6 +251,9 @@
             <h2 className="login-card__title">Welcome back!</h2>
             <p className="login-card__subtitle">Sign in to your SmartLane workspace.</p>
             <p className="login-card__notice">Authorized barangay and TMO personnel only.</p>
+            {errorMessage && (
+              <p className="form-message form-message--error" role="alert">{errorMessage}</p>
+            )}
 
             <form className="login-form" onSubmit={handleSubmit}>
               <div className="field">
@@ -245,7 +297,6 @@
                 </div>
               </div>
 
-              {/* LOU or STEPH: I point nyo yung "Forgot password?" href below papunta sa password reset page. */}
               <div className="form-row">
                 <label className="checkbox">
                   <input
@@ -256,12 +307,11 @@
                   />
                   <span>Remember me</span>
                 </label>
-                <a className="text-link" href="#forgot-password">Forgot password?</a>
               </div>
 
-              <button type="submit" className="btn btn--primary">
+              <button type="submit" className="btn btn--primary" disabled={isSubmitting}>
                 <ArrowIcon />
-                Sign in to SmartLane
+                {isSubmitting ? 'Signing in…' : 'Sign in to SmartLane'}
               </button>
             </form>
 
