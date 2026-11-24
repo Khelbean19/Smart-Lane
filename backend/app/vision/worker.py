@@ -24,7 +24,11 @@ from ..schemas.vision import (
     CameraConfigUpdate,
     CameraReconcileRequest,
     CameraStatusResponse,
+    CameraInferenceResult,
+    InferenceStatusResponse,
 )
+from .detector import YOLODetector, get_detector_config
+from .inference import CameraInferenceRunner
 from dotenv import load_dotenv
 
 
@@ -97,14 +101,34 @@ def _camera_unavailable(error: CameraUnavailable) -> HTTPException:
     return HTTPException(status_code=503, detail=str(error))
 
 
-def create_worker_app(camera_manager: CameraManager | None = None) -> FastAPI:
+def create_worker_app(
+    camera_manager: CameraManager | None = None,
+    detector: YOLODetector | None = None,
+    inference_runner: CameraInferenceRunner | None = None,
+) -> FastAPI:
     manager = camera_manager if camera_manager is not None else CameraManager()
+    config = get_detector_config()
+    detector = detector or YOLODetector(
+        model_path=config["model_path"],
+        confidence=config["confidence"],
+        iou=config["iou"],
+        image_size=config["image_size"],
+        device=config["device"],
+        classes=config["classes"],
+    )
+    runner = inference_runner or CameraInferenceRunner(
+        detector,
+        inference_fps=config["inference_fps"],
+    )
 
     @asynccontextmanager
-    async def lifespan(_: FastAPI):
+    async def lifespan(worker_app: FastAPI):
         try:
+            detector.warmup()
             yield
         finally:
+            runner.stop_all()
+            detector.unload()
             try:
                 await asyncio.to_thread(manager.stop_all)
             except CameraUnavailable as error:
@@ -117,6 +141,8 @@ def create_worker_app(camera_manager: CameraManager | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.camera_manager = manager
+    app.state.detector = detector
+    app.state.inference_runner = runner
     
 
     @app.get(
@@ -152,7 +178,7 @@ def create_worker_app(camera_manager: CameraManager | None = None) -> FastAPI:
     ) -> list[dict[str, Any]]:
         """Register cameras, update their settings, and reconcile active streams."""
         try:
-            return await asyncio.to_thread(
+            statuses = await asyncio.to_thread(
                 request.app.state.camera_manager.reconcile,
                 [camera.model_dump() for camera in update.cameras],
                 update.active_camera_ids,
@@ -160,6 +186,55 @@ def create_worker_app(camera_manager: CameraManager | None = None) -> FastAPI:
             )
         except ValueError as error:
             raise HTTPException(status_code=422, detail=str(error)) from error
+
+        active_ids = {
+            status["camera_id"]
+            for status in statuses
+            if status["state"] == "running"
+        }
+        cameras = {
+            camera_id: request.app.state.camera_manager.get(camera_id)
+            for camera_id in active_ids
+        }
+        request.app.state.inference_runner.sync(active_ids, cameras)
+        return statuses
+
+    @app.get(
+        "/api/v1/inference/status",
+        response_model=InferenceStatusResponse,
+        dependencies=[Depends(require_worker_token)],
+        tags=["Inference"],
+        summary="Get detector and per-camera inference status",
+    )
+    async def inference_status(request: Request) -> dict[str, Any]:
+        return request.app.state.inference_runner.status()
+
+    @app.get(
+        "/api/v1/cameras/{camera_id}/detections/latest",
+        response_model=CameraInferenceResult,
+        dependencies=[Depends(require_worker_token)],
+        tags=["Inference"],
+        summary="Get the latest detections for a camera",
+        responses={
+            404: {"description": "Unknown or inactive camera"},
+        },
+    )
+    async def latest_detections(
+        request: Request,
+        camera_id: int,
+    ) -> dict[str, Any]:
+        try:
+            request.app.state.camera_manager.get(camera_id)
+        except KeyError as error:
+            raise HTTPException(status_code=404, detail=str(error.args[0])) from error
+
+        result = request.app.state.inference_runner.latest(camera_id)
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Inference is not running for this camera.",
+            )
+        return result
 
     @app.patch(
         "/api/v1/cameras/{camera_id}/config",

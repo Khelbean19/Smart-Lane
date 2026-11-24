@@ -42,6 +42,40 @@ def worker_headers():
     return {"Authorization": f"Bearer {WORKER_TOKEN}"}
 
 
+class FakeDetector:
+    def __init__(self):
+        self.loaded = False
+        self.predicted_frames = []
+
+    def warmup(self):
+        self.loaded = True
+
+    def unload(self):
+        self.loaded = False
+
+    def predict(self, frame):
+        self.predicted_frames.append(frame)
+        return [
+            {
+                "class_id": 2,
+                "class_name": "car",
+                "confidence": 0.95,
+                "bbox": {"x1": 1.0, "y1": 2.0, "x2": 8.0, "y2": 9.0},
+            }
+        ]
+
+    def status(self):
+        return {
+            "loaded": self.loaded,
+            "model_path": "fake.pt",
+            "device": "cpu",
+            "confidence": 0.4,
+            "iou": 0.5,
+            "image_size": 640,
+            "classes": [0, 2],
+        }
+
+
 def test_worker_starts_with_an_empty_inactive_registry(monkeypatch):
     monkeypatch.setenv("VISION_WORKER_TOKEN", WORKER_TOKEN)
     opened_sources = []
@@ -307,3 +341,57 @@ def test_manager_does_not_replace_camera_when_old_capture_fails_to_stop(monkeypa
     assert len(instances) == 1
     assert statuses[0]["source"] == "0"
     assert statuses[0]["state"] == "error"
+
+
+def test_inference_status_and_latest_detections_are_authenticated(monkeypatch):
+    monkeypatch.setenv("VISION_WORKER_TOKEN", WORKER_TOKEN)
+
+    def capture_factory(source):
+        return FakeCapture(source, shape=(480, 640))
+
+    manager = CameraManager(capture_factory=capture_factory)
+    detector = FakeDetector()
+    app = create_worker_app(
+        manager,
+        detector=detector,
+        inference_runner=None,
+    )
+
+    with TestClient(app) as client:
+        assert client.get("/api/v1/inference/status").status_code == 401
+
+        reconcile = client.put(
+            "/api/v1/cameras/reconcile",
+            headers=worker_headers(),
+            json={
+                "cameras": [{"camera_id": 12, "source": "0"}],
+                "active_camera_ids": [12],
+            },
+        )
+        assert reconcile.status_code == 200
+
+        status = client.get(
+            "/api/v1/inference/status",
+            headers=worker_headers(),
+        )
+        assert status.status_code == 200
+        assert status.json()["detector"]["loaded"] is True
+        assert status.json()["active_camera_ids"] == [12]
+
+        for _ in range(20):
+            result = client.get(
+                "/api/v1/cameras/12/detections/latest",
+                headers=worker_headers(),
+            )
+            if result.status_code == 200 and result.json()["detections"]:
+                break
+            time.sleep(0.05)
+
+        assert result.status_code == 200
+        assert result.json()["camera_id"] == 12
+        assert result.json()["detections"][0]["class_name"] == "car"
+
+        assert client.get(
+            "/api/v1/cameras/404/detections/latest",
+            headers=worker_headers(),
+        ).status_code == 404

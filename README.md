@@ -235,6 +235,58 @@ The worker listens only on `127.0.0.1:8001`. It opens no cameras until the
 backend database assignment assigns a camera to a live slot. The worker keeps
 two independent capture processes for the assigned slots.
 
+The detector loads `backend/models_weights/yolo26n.pt` by default. The weight
+can be changed or inference tuned with these worker environment variables:
+
+- `VISION_MODEL_PATH`
+- `VISION_MODEL_DEVICE` (`cpu` or an accelerator/device ID)
+- `VISION_CONFIDENCE_THRESHOLD`
+- `VISION_IOU_THRESHOLD`
+- `VISION_MODEL_IMAGE_SIZE`
+
+### YOLO26 benchmark and detection testing
+
+Add test videos to `backend/tests/footage`, and keep model weights under
+`backend/models_weights/` (`backend/model_weights/` is also supported). Run:
+
+```powershell
+uv run python backend/tests/benchmark_yolo.py
+```
+
+The benchmark is isolated from the server environment: it does not read or set
+`VISION_MODEL_PATH`. It tests nano, small, and medium weights in 16:9 and 4:3
+presentations, with both production `fit` and `crop` preprocessing modes. The default
+model input is 640x480, matching the repository's 640-pixel-wide detection pipeline.
+
+Useful options include `--model-size n s`, `--video footage_sample1`,
+`--aspect 16:9 4:3`, `--mode fit crop`, `--duration 10`, `--device cpu`,
+`--skip-videos`, and `--report custom_name.txt`.
+
+Outputs are written to `backend/tests/benchmarks/`:
+
+- `benchmark_results.txt`: human-readable speed, detection, confidence, and label-backed
+  accuracy statistics.
+- `benchmark_results.json`: the same machine-readable result data.
+- `detection_videos/`: 10-second 640x480 MP4 clips with vehicle bounding boxes.
+
+For label-backed precision, recall, and AP@0.5, place YOLO-format label text files in
+either `labels/<video-stem>/` or `<video-stem>_labels/` beside the footage. Frame label
+names should use six-digit frame numbers or plain frame indices. When no labels exist,
+the report clearly marks accuracy as unavailable instead of estimating it.
+- `VISION_MODEL_CLASSES` (comma-separated class IDs)
+- `VISION_INFERENCE_FPS`
+
+The worker exposes authenticated inference data through:
+
+- `GET /api/v1/inference/status`
+- `GET /api/v1/cameras/{camera_id}/detections/latest`
+
+Both endpoints require `VISION_WORKER_TOKEN`. The latest-result endpoint
+reports one result per frame sequence and is not a detection queue. Bounding
+boxes are in model-input coordinates; downstream services must apply any
+letterbox, crop ROI, global frame cap, and source-resolution transformations
+before mapping detections to the original camera image.
+
 ### Run the backend and frontend
 
 Open another terminal at the repository root:

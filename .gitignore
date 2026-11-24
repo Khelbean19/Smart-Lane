@@ -52,6 +52,10 @@ coverage.xml
 .pytest_cache/
 cover/
 
+# Model weights benchmarks
+benchmarks
+footage
+
 # Translations
 *.mo
 *.pot

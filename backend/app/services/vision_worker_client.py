@@ -176,3 +176,12 @@ class VisionWorkerClient:
             raise VisionWorkerProtocolError(
                 "The vision worker returned an invalid response."
             ) from error
+
+    async def get_inference_status(self) -> dict[str, Any]:
+        return await self.request_json("GET", "/api/v1/inference/status")
+
+    async def get_latest_detections(self, camera_id: int) -> dict[str, Any]:
+        return await self.request_json(
+            "GET",
+            f"/api/v1/cameras/{camera_id}/detections/latest",
+        )

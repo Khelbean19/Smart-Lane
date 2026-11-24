@@ -93,7 +93,7 @@ def cap_frame(
         raise ValueError("Camera returned an empty frame.")
 
     scale = min(max_width / source_width, max_height / source_height, 1.0)
-    if scale == 1.0:
+    if scale == 1:
         return frame, (source_width, source_height)
 
     output_width = max(1, min(max_width, round(source_width * scale)))
