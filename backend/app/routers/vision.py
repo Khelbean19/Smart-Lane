@@ -36,6 +36,7 @@ from ..schemas.vision import (
     CameraPreprocessingResponse,
     CameraPreprocessingSettingsUpdate,
     CameraSlotsResponse,
+    InferenceStatusResponse,
 )
 from ..services.camera_repository import (
     CameraDatabaseUnavailable,
@@ -46,6 +47,9 @@ from ..services.vision_worker_client import (
     VisionWorkerClient,
     VisionWorkerConfigurationError,
     VisionWorkerError,
+    VisionWorkerProtocolError,
+    VisionWorkerResponseError,
+    VisionWorkerUnavailable,
 )
 from ..vision.pipeline import get_global_frame_cap, validate_preprocessing_settings
 from .auth import get_admin_user, get_current_user
@@ -390,3 +394,31 @@ async def update_camera_preprocessing_settings(
         status_code=202 if worker_error is not None else 200,
         content=payload,
     )
+
+
+@router.get(
+    "/api/v1/vision/inference/status",
+    response_model=InferenceStatusResponse,
+    tags=["Vision"],
+)
+async def get_vision_inference_status(
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+    client: Annotated[VisionWorkerClient, Depends(get_vision_worker_client)],
+) -> dict[str, Any]:
+    """Return worker inference snapshots through the authenticated API."""
+    try:
+        return await client.get_inference_status()
+    except VisionWorkerResponseError as error:
+        status_code = 503 if error.status_code == 503 else 502
+        raise HTTPException(
+            status_code=status_code,
+            detail=(
+                f"The vision worker returned HTTP {error.status_code}: {error}"
+            ),
+        ) from error
+    except VisionWorkerUnavailable as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+    except VisionWorkerProtocolError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    except VisionWorkerError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error

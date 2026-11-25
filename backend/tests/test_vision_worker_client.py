@@ -37,6 +37,44 @@ def test_worker_client_sends_shared_token_and_payload():
     assert result == []
 
 
+def test_worker_client_gets_inference_status_and_latest_results():
+    def handle(request):
+        path = str(request.url)
+        if path.endswith("/api/v1/inference/status"):
+            return httpx.Response(
+                200,
+                json={
+                    "detector": {"loaded": True},
+                    "active_camera_ids": [10],
+                    "camera_results": {},
+                },
+            )
+        assert path.endswith("/api/v1/cameras/10/detections/latest")
+        return httpx.Response(
+            200,
+            json={
+                "camera_id": 10,
+                "frame_sequence": 42,
+                "timestamp": 123.0,
+                "status": "ok",
+                "detections": [],
+                "error": None,
+            },
+        )
+
+    client = VisionWorkerClient(
+        base_url="http://127.0.0.1:8001",
+        token="worker-secret",
+        transport=httpx.MockTransport(handle),
+    )
+
+    status = asyncio.run(client.get_inference_status())
+    latest = asyncio.run(client.get_latest_detections(10))
+
+    assert status["active_camera_ids"] == [10]
+    assert latest["frame_sequence"] == 42
+
+
 def test_worker_client_restricts_url_to_loopback():
     with pytest.raises(VisionWorkerConfigurationError):
         VisionWorkerClient(base_url="http://example.com:8001", token="worker-secret")

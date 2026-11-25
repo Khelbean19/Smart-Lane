@@ -83,10 +83,16 @@
       return { left, top, width, height };
     }
 
-    function LiveCameraPreview({ slot, isAdmin }) {
+    function LiveCameraPreview({
+      slot,
+      isAdmin,
+      inferenceStatus,
+      inferenceError,
+    }) {
       const previewRef = useRef(null);
       const [contentRect, setContentRect] = useState(null);
       const [intrinsicResolution, setIntrinsicResolution] = useState(null);
+      const inferenceResult = inferenceStatus?.camera_results?.[String(slot.camera_id)];
       const sourceResolution = intrinsicResolution
         || slot.preview_resolution
         || slot.source_resolution;
@@ -112,6 +118,23 @@
           });
         }
       }
+
+      const overlayError = inferenceError
+        || (inferenceResult?.status === 'error' ? inferenceResult.error : '');
+      const inferenceFps = inferenceResult?.inference_fps
+        || inferenceStatus?.inference_fps;
+      const fpsLabel = Number.isFinite(inferenceFps)
+        ? `${inferenceFps.toFixed(1)} FPS`
+        : 'FPS unavailable';
+      const inferenceMessage = overlayError
+        ? `Inference error: ${overlayError}`
+        : inferenceResult?.status === 'ok'
+          ? `${inferenceResult.detections.length} vehicle${inferenceResult.detections.length === 1 ? '' : 's'} detected · Frame ${inferenceResult.frame_sequence} · ${fpsLabel}`
+          : inferenceResult
+            ? `Waiting for inference frame · ${fpsLabel}`
+            : inferenceStatus
+              ? 'No inference result for this camera'
+              : 'Connecting to inference status';
 
       return (
         <div ref={previewRef} className="camera__view camera__view--wide">
@@ -149,6 +172,34 @@
           )}
           {isAdmin && slot.camera_id !== null && (
             <span className="camera__tag">Source {slot.source}</span>
+          )}
+          {inferenceResult?.detections.map((detection) => {
+            const bbox = detection.preview_bbox;
+            if (!bbox || !contentRect) return null;
+            const left = contentRect.left + bbox.x1 * contentRect.width;
+            const top = contentRect.top + bbox.y1 * contentRect.height;
+            const width = (bbox.x2 - bbox.x1) * contentRect.width;
+            const height = (bbox.y2 - bbox.y1) * contentRect.height;
+            return (
+              <span
+                key={detection.track_id}
+                className="detection-box"
+                style={{ left, top, width, height }}
+              >
+                <span className="detection-box__label">
+                  {detection.vehicle_class} · {detection.class_name} · #{detection.track_id} · {(detection.confidence * 100).toFixed(0)}%
+                </span>
+              </span>
+            );
+          })}
+          {slot.camera_id !== null && slot.status === 'ONLINE' && (
+            <span
+              className={`camera__inference-status${overlayError ? ' camera__inference-status--error' : ''}`}
+              role={overlayError ? 'alert' : 'status'}
+              title={inferenceMessage}
+            >
+              {inferenceMessage}
+            </span>
           )}
         </div>
       );
@@ -534,6 +585,8 @@
       isAdmin,
       onSelectionChange,
       onApply,
+      inferenceStatus,
+      inferenceError,
     }) {
       return (
         <section className="camera-section">
@@ -573,7 +626,12 @@
                         </span>
                       </div>
 
-                      <LiveCameraPreview slot={slot} isAdmin={isAdmin} />
+                      <LiveCameraPreview
+                        slot={slot}
+                        isAdmin={isAdmin}
+                        inferenceStatus={inferenceStatus}
+                        inferenceError={inferenceError}
+                      />
 
                       {isAdmin && assigned && (
                         <div className="camera-diagnostics" aria-label="Camera preprocessing diagnostics">
@@ -794,7 +852,12 @@
       const [cameraLoading, setCameraLoading] = useState(true);
       const [cameraSaving, setCameraSaving] = useState(false);
       const [cameraError, setCameraError] = useState('');
+      const [inferenceStatus, setInferenceStatus] = useState(null);
+      const [inferenceError, setInferenceError] = useState('');
       const hasUnsavedChanges = useRef(false);
+      const hasOnlineCamera = Boolean(cameraState?.slots.some(
+        (slot) => slot.status === 'ONLINE' && slot.camera_id !== null,
+      ));
 
       useEffect(() => {
         let isMounted = true;
@@ -838,6 +901,57 @@
           window.clearInterval(timer);
         };
       }, []);
+
+      useEffect(() => {
+        if (!hasOnlineCamera) {
+          setInferenceStatus(null);
+          setInferenceError('');
+          return undefined;
+        }
+
+        let isMounted = true;
+        let timer = null;
+        let interval = 100;
+
+        async function refreshInferenceStatus() {
+          const requestStartedAt = performance.now();
+          try {
+            const response = await window.smartLaneSession.authenticatedFetch(
+              '/api/v1/vision/inference/status',
+            );
+            const body = await response.json();
+            if (!response.ok) {
+              throw new Error(body.detail || `Could not load detections (HTTP ${response.status}).`);
+            }
+            if (!isMounted) return;
+            setInferenceStatus(body);
+            setInferenceError('');
+            if (Number.isFinite(body.inference_fps) && body.inference_fps > 0) {
+              interval = 1000 / body.inference_fps;
+            }
+          } catch (error) {
+            if (isMounted) {
+              setInferenceStatus(null);
+              setInferenceError(error.message);
+              interval = 1000;
+            }
+          } finally {
+            if (isMounted) {
+              const elapsed = performance.now() - requestStartedAt;
+              timer = window.setTimeout(
+                refreshInferenceStatus,
+                Math.max(0, interval - elapsed),
+              );
+            }
+          }
+        }
+
+        refreshInferenceStatus();
+        return () => {
+          isMounted = false;
+          if (timer !== null) window.clearTimeout(timer);
+        };
+      }, [hasOnlineCamera]);
 
       const dirty = Boolean(cameraState) && cameraState.slots.some((slot) => (
         (stagedAssignments[slot.slot_id] || '')
@@ -914,6 +1028,8 @@
                 dirty={dirty}
                 saving={cameraSaving}
                 isAdmin={currentUser && currentUser.role === 'ADMINISTRATOR'}
+                inferenceStatus={inferenceStatus}
+                inferenceError={inferenceError}
                 onSelectionChange={updateStagedAssignment}
                 onApply={applyCameraSetup}
               />

@@ -1,0 +1,34 @@
+# PostgreSQL
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=<enter-password-here>
+POSTGRES_DB=smartlane-db
+POSTGRES_PORT=5440
+POSTGRES_HOST=127.0.0.1
+
+# Backend
+SESSION_SECRET=
+AUTH_SECRET_KEY=<generate-long-string>
+
+# SMS alerts
+SMS_API_URL=
+SMS_API_KEY=
+
+# Vision
+YOLO_WEIGHTS_PATH=
+VISION_WORKER_HOST=localhost
+VISION_WORKER_PORT=8001
+VISION_WORKER_TOKEN=<generate-long-string>
+VISION_WORKER_AUTOSTART=true
+VISION_MAX_FRAME_WIDTH=640
+VISION_MAX_FRAME_HEIGHT=640
+
+# REQUIRED
+VISION_MODEL_PATH=./backend/models_weights/yolo26n.pt  # use yolo26s.pt for small model instead of nano
+
+# Model settings (comment to omit and run Vision Worker with default model parameters)
+# VISION_MODEL_DEVICE=
+# VISION_CONFIDENCE_THRESHOLD=
+# VISION_IOU_THRESHOLD=
+# VISION_MODEL_IMAGE_SIZE=
+VISION_MODEL_CLASSES=1,2,3,4,5,6,7,8
+VISION_INFERENCE_FPS=10

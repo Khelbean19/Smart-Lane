@@ -20,6 +20,11 @@ class InvalidCameraSettings(ValueError):
 
 
 class CameraRepository:
+    GLOBAL_FRAME_CAP_SETTINGS = {
+        "width": "vision_max_frame_width",
+        "height": "vision_max_frame_height",
+    }
+
     def __init__(
         self,
         connection: Any,
@@ -102,6 +107,84 @@ class CameraRepository:
             except Exception:
                 self._connection.rollback()
                 raise
+
+    def reconcile_global_frame_cap(
+        self,
+        max_width: int,
+        max_height: int,
+    ) -> list[dict[str, int]]:
+        """Adjust camera detection dimensions when the configured cap changes."""
+        if max_width <= 0 or max_height <= 0:
+            raise ValueError("Global frame cap dimensions must be positive.")
+
+        self._require_connection()
+        with self._database_lock:
+            try:
+                setting_keys = tuple(self.GLOBAL_FRAME_CAP_SETTINGS.values())
+                self._cursor.execute(
+                    "SELECT setting_key, setting_value FROM system_settings "
+                    "WHERE setting_key IN (%s, %s)",
+                    setting_keys,
+                )
+                previous_cap = {
+                    row["setting_key"]: int(row["setting_value"])
+                    for row in self._cursor.fetchall()
+                }
+                cap_changed = previous_cap != {
+                    self.GLOBAL_FRAME_CAP_SETTINGS["width"]: max_width,
+                    self.GLOBAL_FRAME_CAP_SETTINGS["height"]: max_height,
+                }
+                changes: list[dict[str, int]] = []
+
+                if cap_changed:
+                    self._cursor.execute(
+                        "SELECT camera_id, detection_width, detection_height "
+                        "FROM cameras ORDER BY camera_id"
+                    )
+                    for camera in self._cursor.fetchall():
+                        width = camera["detection_width"]
+                        height = camera["detection_height"]
+                        scale = min(max_width / width, max_height / height, 1.0)
+                        adjusted_width = max(1, min(max_width, round(width * scale)))
+                        adjusted_height = max(1, min(max_height, round(height * scale)))
+                        if (adjusted_width, adjusted_height) == (width, height):
+                            continue
+
+                        self._cursor.execute(
+                            "UPDATE cameras SET detection_width = %s, "
+                            "detection_height = %s WHERE camera_id = %s",
+                            (adjusted_width, adjusted_height, camera["camera_id"]),
+                        )
+                        changes.append(
+                            {
+                                "camera_id": camera["camera_id"],
+                                "previous_width": width,
+                                "previous_height": height,
+                                "detection_width": adjusted_width,
+                                "detection_height": adjusted_height,
+                            }
+                        )
+
+                    for dimension, value in (
+                        ("width", max_width),
+                        ("height", max_height),
+                    ):
+                        self._cursor.execute(
+                            "INSERT INTO system_settings "
+                            "(setting_key, setting_value, value_type) "
+                            "VALUES (%s, %s, 'INT') "
+                            "ON CONFLICT (setting_key) DO UPDATE SET "
+                            "setting_value = EXCLUDED.setting_value, "
+                            "value_type = EXCLUDED.value_type, "
+                            "updated_at = CURRENT_TIMESTAMP",
+                            (self.GLOBAL_FRAME_CAP_SETTINGS[dimension], str(value)),
+                        )
+
+                self._connection.commit()
+            except Exception:
+                self._connection.rollback()
+                raise
+        return changes
 
     def replace_assignments(
         self,

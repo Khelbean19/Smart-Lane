@@ -1909,6 +1909,52 @@ body {
   margin: 0;
 }
 
+.detection-box {
+  position: absolute;
+  z-index: 3;
+  box-sizing: border-box;
+  border: 2px solid #38e0c2;
+  pointer-events: none;
+}
+
+.detection-box__label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 2px 4px;
+  background: rgba(5, 28, 36, 0.88);
+  color: #fff;
+  font-size: 10px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.camera__inference-status {
+  position: absolute;
+  z-index: 4;
+  right: 8px;
+  bottom: 8px;
+  left: 8px;
+  width: fit-content;
+  max-width: calc(100% - 32px);
+  overflow: hidden;
+  padding: 4px 7px;
+  border-radius: 4px;
+  background: rgba(5, 28, 36, 0.88);
+  color: #fff;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.camera__inference-status--error {
+  background: rgba(95, 31, 31, 0.92);
+}
+
 .camera__view--interactive {
   touch-action: none;
   user-select: none;
