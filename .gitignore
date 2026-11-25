@@ -241,7 +241,6 @@ yarn-error.log*
 !frontend/src/build/
 
 # YOLOv8 weights and training data
-*.pt
 *.onnx
 runs/
 ml/dataset/*

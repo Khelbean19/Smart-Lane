@@ -21,14 +21,16 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 
-from ..app.vision.pipeline import preprocess_detection_frame
-
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TESTS_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = PROJECT_ROOT / "backend"
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
+from backend.app.vision.pipeline import preprocess_detection_frame
+
+
 FOOTAGE_DIR = TESTS_DIR / "footage"
 BENCHMARK_DIR = TESTS_DIR / "benchmarks"
 MODEL_DIRS = (

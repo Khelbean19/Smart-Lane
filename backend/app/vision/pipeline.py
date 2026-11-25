@@ -104,11 +104,29 @@ def cap_frame(
     )
 
 
-def _letterbox(frame: np.ndarray, width: int, height: int) -> np.ndarray:
-    source_height, source_width = frame.shape[:2]
+def _letterbox_dimensions(
+    source_width: int,
+    source_height: int,
+    width: int,
+    height: int,
+) -> tuple[int, int, int, int]:
     scale = min(width / source_width, height / source_height)
     resized_width = max(1, min(width, round(source_width * scale)))
     resized_height = max(1, min(height, round(source_height * scale)))
+    left = (width - resized_width) // 2
+    top = (height - resized_height) // 2
+    return resized_width, resized_height, left, top
+
+
+def _letterbox(frame: np.ndarray, width: int, height: int) -> np.ndarray:
+    source_height, source_width = frame.shape[:2]
+    resized_width, resized_height, left, top = _letterbox_dimensions(
+        source_width,
+        source_height,
+        width,
+        height,
+    )
+    scale = min(width / source_width, height / source_height)
     interpolation = cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
     resized = cv2.resize(frame, (resized_width, resized_height), interpolation=interpolation)
 
@@ -116,10 +134,74 @@ def _letterbox(frame: np.ndarray, width: int, height: int) -> np.ndarray:
         canvas = np.full((height, width), 114, dtype=frame.dtype)
     else:
         canvas = np.full((height, width, frame.shape[2]), 114, dtype=frame.dtype)
-    left = (width - resized_width) // 2
-    top = (height - resized_height) // 2
     canvas[top : top + resized_height, left : left + resized_width] = resized
     return canvas
+
+
+def map_detection_bbox_to_preview(
+    bbox: dict[str, float],
+    preview_width: int,
+    preview_height: int,
+    settings: dict[str, Any],
+) -> dict[str, float] | None:
+    """Map a detection-frame box to normalized coordinates in the preview frame."""
+    detection_width = settings["detection_width"]
+    detection_height = settings["detection_height"]
+    if min(preview_width, preview_height, detection_width, detection_height) <= 0:
+        raise ValueError("Preview and detection dimensions must be positive.")
+
+    crop_left = 0
+    crop_top = 0
+    crop_right = preview_width
+    crop_bottom = preview_height
+    if settings["preprocessing_mode"] == "crop":
+        crop_left = min(preview_width - 1, math.floor(settings["roi_x"] * preview_width))
+        crop_top = min(preview_height - 1, math.floor(settings["roi_y"] * preview_height))
+        crop_right = min(
+            preview_width,
+            max(
+                crop_left + 1,
+                math.ceil(
+                    (settings["roi_x"] + settings["roi_width"]) * preview_width
+                ),
+            ),
+        )
+        crop_bottom = min(
+            preview_height,
+            max(
+                crop_top + 1,
+                math.ceil(
+                    (settings["roi_y"] + settings["roi_height"]) * preview_height
+                ),
+            ),
+        )
+
+    crop_width = crop_right - crop_left
+    crop_height = crop_bottom - crop_top
+    resized_width, resized_height, pad_left, pad_top = _letterbox_dimensions(
+        crop_width,
+        crop_height,
+        detection_width,
+        detection_height,
+    )
+
+    box_left = max(pad_left, min(bbox["x1"], bbox["x2"]))
+    box_top = max(pad_top, min(bbox["y1"], bbox["y2"]))
+    box_right = min(pad_left + resized_width, max(bbox["x1"], bbox["x2"]))
+    box_bottom = min(pad_top + resized_height, max(bbox["y1"], bbox["y2"]))
+    if box_right <= box_left or box_bottom <= box_top:
+        return None
+
+    preview_left = crop_left + (box_left - pad_left) * crop_width / resized_width
+    preview_top = crop_top + (box_top - pad_top) * crop_height / resized_height
+    preview_right = crop_left + (box_right - pad_left) * crop_width / resized_width
+    preview_bottom = crop_top + (box_bottom - pad_top) * crop_height / resized_height
+    return {
+        "x1": max(0.0, min(1.0, preview_left / preview_width)),
+        "y1": max(0.0, min(1.0, preview_top / preview_height)),
+        "x2": max(0.0, min(1.0, preview_right / preview_width)),
+        "y2": max(0.0, min(1.0, preview_bottom / preview_height)),
+    }
 
 
 def preprocess_detection_frame(

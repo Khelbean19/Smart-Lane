@@ -213,8 +213,11 @@ class DetectionResult(BaseModel):
 
     class_id: int
     class_name: str
+    vehicle_class: Literal["2W", "4W", "EMG"]
+    track_id: int
     confidence: float = Field(ge=0, le=1)
     bbox: dict[str, float]
+    preview_bbox: dict[str, float] | None = None
 
 
 class CameraInferenceResult(BaseModel):
@@ -225,6 +228,10 @@ class CameraInferenceResult(BaseModel):
     timestamp: float | None
     status: Literal["running", "ok", "error"]
     detections: list[DetectionResult]
+    inference_fps: float = Field(gt=0)
+    actual_inference_fps: float = Field(default=0, ge=0)
+    inference_duration_ms: float = Field(default=0, ge=0)
+    inferences_completed: int = Field(default=0, ge=0)
     error: str | None = None
 
 
@@ -234,3 +241,6 @@ class InferenceStatusResponse(BaseModel):
     detector: dict[str, Any]
     active_camera_ids: list[int]
     camera_results: dict[str, CameraInferenceResult]
+    inference_fps: float = Field(gt=0)
+    actual_inference_fps: float = Field(default=0, ge=0)
+    inferences_completed: int = Field(default=0, ge=0)

@@ -160,9 +160,9 @@ def normalize_source(source: str) -> int | str:
 class CameraCapture:
     """Own and run one camera capture in a background thread.
 
-    Each instance publishes two representations of the latest frame: a
-    frame-capped JPEG for preview consumers and a preprocessing-sized NumPy
-    frame for detection consumers. Construction does not open the camera;
+    Each instance publishes a frame-capped JPEG for preview consumers and the
+    latest capped source frame for on-demand detection preprocessing.
+    Construction does not open the camera;
     call :meth:`start` to begin capture.
 
     Args:
@@ -442,12 +442,12 @@ class CameraCapture:
         after_sequence: int,
         timeout: float = 1.0,
     ) -> tuple[int, Any] | None:
-        """Wait for and copy the latest detection-preprocessed frame.
+        """Wait for the latest frame and preprocess it for detection.
 
-        The returned NumPy array is a copy so a detector can modify it without
-        changing the frame held by ``CameraCapture``. As with
-        :meth:`next_frame`, callers should provide their last consumed
-        sequence to receive only a newer frame.
+        Capture retains the capped source frame and defers detection resizing
+        until a consumer requests a newer frame. This avoids preprocessing
+        captured frames that the inference scheduler will skip. The returned
+        array is independent of the frame held by ``CameraCapture``.
 
         Args:
             after_sequence: Last sequence consumed by the caller.
@@ -470,14 +470,17 @@ class CameraCapture:
             )
             if self._sequence <= after_sequence or self._detection_frame is None:
                 return None
-            return self._sequence, self._detection_frame.copy()
+            sequence = self._sequence
+            frame = self._detection_frame.copy()
+            settings = self._config.preprocessing_settings()
+        return sequence, preprocess_detection_frame(frame, settings)
 
     def _capture_loop(self) -> None:
         """Run the blocking OpenCV capture loop until stopped or failed.
 
         This private method is the target of the background thread. It opens
-        the source, applies capture properties, caps and preprocesses frames,
-        publishes JPEG/detection representations, and updates lifecycle state.
+        the source, applies capture properties, caps frames, publishes JPEG and
+        source-frame representations, and updates lifecycle state.
         Call :meth:`start` rather than invoking this method directly.
         """
         capture = None
@@ -500,10 +503,6 @@ class CameraCapture:
                     self._max_frame_width,
                     self._max_frame_height,
                 )
-                detection_frame = preprocess_detection_frame(
-                    capped_frame,
-                    self._config.preprocessing_settings(),
-                )
                 encoded, buffer = cv2.imencode(
                     ".jpg",
                     capped_frame,
@@ -516,7 +515,7 @@ class CameraCapture:
                     if self._stop_event.is_set():
                         break
                     self._jpeg = buffer.tobytes()
-                    self._detection_frame = detection_frame
+                    self._detection_frame = capped_frame
                     self._source_resolution = {
                         "width": source_width,
                         "height": source_height,

@@ -634,6 +634,52 @@
         : 'Unavailable until the first frame';
     }
 
+    function getDetectionResolution(
+      camera,
+      maxResolution,
+      preprocessingMode,
+      roiWidth = 1,
+      roiHeight = 1,
+      fallbackResolution,
+    ) {
+      const sourceResolution = [
+        camera?.preview_resolution,
+        camera?.source_resolution,
+        fallbackResolution,
+      ].find((resolution) => {
+        const width = Number(resolution?.width);
+        const height = Number(resolution?.height);
+        return Number.isFinite(width) && width > 0
+          && Number.isFinite(height) && height > 0;
+      });
+      const sourceWidth = Number(sourceResolution?.width);
+      const sourceHeight = Number(sourceResolution?.height);
+      const maxWidth = Number(maxResolution?.width);
+      const maxHeight = Number(maxResolution?.height);
+      if (![sourceWidth, sourceHeight, maxWidth, maxHeight].every(Number.isFinite)
+        || sourceWidth <= 0 || sourceHeight <= 0 || maxWidth <= 0 || maxHeight <= 0) {
+        return null;
+      }
+
+      const scale = Math.min(maxWidth / sourceWidth, maxHeight / sourceHeight, 1);
+      const frameWidth = Math.max(1, Math.min(maxWidth, Math.round(sourceWidth * scale)));
+      const frameHeight = Math.max(1, Math.min(maxHeight, Math.round(sourceHeight * scale)));
+      if (preprocessingMode !== 'crop') {
+        return { width: frameWidth, height: frameHeight };
+      }
+
+      const normalizedWidth = Number(roiWidth);
+      const normalizedHeight = Number(roiHeight);
+      if (!Number.isFinite(normalizedWidth) || !Number.isFinite(normalizedHeight)
+        || normalizedWidth <= 0 || normalizedHeight <= 0) {
+        return null;
+      }
+      return {
+        width: Math.max(1, Math.min(frameWidth, Math.round(frameWidth * normalizedWidth))),
+        height: Math.max(1, Math.min(frameHeight, Math.round(frameHeight * normalizedHeight))),
+      };
+    }
+
     function CameraPreprocessingPanel({ isAdmin }) {
       const requestedCameraId = new URLSearchParams(window.location.search).get('camera_id');
       const [cameraState, setCameraState] = useState(null);
@@ -712,10 +758,62 @@
           roi_width: String(camera.roi_width),
           roi_height: String(camera.roi_height),
         };
+        const savedForm = { ...nextForm };
+        const detectionResolution = getDetectionResolution(
+          camera,
+          cameraState?.global_max_resolution,
+          nextForm.preprocessing_mode,
+          nextForm.roi_width,
+          nextForm.roi_height,
+          intrinsicResolution,
+        );
+        if (detectionResolution) {
+          nextForm.detection_width = String(detectionResolution.width);
+          nextForm.detection_height = String(detectionResolution.height);
+        }
         setForm(nextForm);
-        baselineRef.current = JSON.stringify(nextForm);
-        setDirty(false);
-      }, [camera, selectedCameraId]);
+        baselineRef.current = JSON.stringify(savedForm);
+        setDirty(JSON.stringify(nextForm) !== baselineRef.current);
+      }, [camera, cameraState?.global_max_resolution, selectedCameraId]);
+
+      useEffect(() => {
+        if (!camera || !form || dirty) return;
+        setForm((previous) => {
+          if (!previous) return previous;
+          const detectionResolution = getDetectionResolution(
+            camera,
+            cameraState?.global_max_resolution,
+            previous.preprocessing_mode,
+            previous.roi_width,
+            previous.roi_height,
+            intrinsicResolution,
+          );
+          if (!detectionResolution) return previous;
+          const next = {
+            ...previous,
+            detection_width: String(detectionResolution.width),
+            detection_height: String(detectionResolution.height),
+          };
+          if (next.detection_width === previous.detection_width
+            && next.detection_height === previous.detection_height) return previous;
+          setDirty(JSON.stringify(next) !== baselineRef.current);
+          return next;
+        });
+      }, [
+        camera?.camera_id,
+        camera?.preview_resolution?.width,
+        camera?.preview_resolution?.height,
+        camera?.source_resolution?.width,
+        camera?.source_resolution?.height,
+        cameraState?.global_max_resolution?.width,
+        cameraState?.global_max_resolution?.height,
+        form?.preprocessing_mode,
+        form?.roi_width,
+        form?.roi_height,
+        intrinsicResolution?.width,
+        intrinsicResolution?.height,
+        dirty,
+      ]);
 
       function updateForm(event) {
         if (!cameraActive) return;
@@ -723,14 +821,46 @@
         if (name === 'preprocessing_mode' && value !== 'crop') setDrawMode(false);
         setForm((previous) => {
           const next = { ...previous, [name]: value };
+          if (name === 'preprocessing_mode') {
+            const detectionResolution = getDetectionResolution(
+              camera,
+              cameraState?.global_max_resolution,
+              value,
+              next.roi_width,
+              next.roi_height,
+              intrinsicResolution,
+            );
+            if (detectionResolution) {
+              next.detection_width = String(detectionResolution.width);
+              next.detection_height = String(detectionResolution.height);
+            }
+          }
           if (name === 'detection_width' && cameraState?.global_max_resolution) {
+            const frameResolution = getDetectionResolution(
+              camera,
+              cameraState.global_max_resolution,
+              'fit',
+              1,
+              1,
+              intrinsicResolution,
+            );
+            const frameWidth = frameResolution?.width || cameraState.global_max_resolution.width;
             const width = Math.min(cameraState.global_max_resolution.width, Math.max(1, Number(value) || 1));
-            next.roi_width = String(width / cameraState.global_max_resolution.width);
+            next.roi_width = String(Math.min(1, width / frameWidth));
             next.roi_x = String(Math.min(Number(next.roi_x) || 0, 1 - Number(next.roi_width)));
           }
           if (name === 'detection_height' && cameraState?.global_max_resolution) {
+            const frameResolution = getDetectionResolution(
+              camera,
+              cameraState.global_max_resolution,
+              'fit',
+              1,
+              1,
+              intrinsicResolution,
+            );
+            const frameHeight = frameResolution?.height || cameraState.global_max_resolution.height;
             const height = Math.min(cameraState.global_max_resolution.height, Math.max(1, Number(value) || 1));
-            next.roi_height = String(height / cameraState.global_max_resolution.height);
+            next.roi_height = String(Math.min(1, height / frameHeight));
             next.roi_y = String(Math.min(Number(next.roi_y) || 0, 1 - Number(next.roi_height)));
           }
           setDirty(JSON.stringify(next) !== baselineRef.current);
@@ -785,12 +915,28 @@
 
       function syncZone(next) {
         if (!cameraState?.global_max_resolution) return;
-        const width = Math.max(1 / cameraState.global_max_resolution.width, Math.min(1, next.width));
-        const height = Math.max(1 / cameraState.global_max_resolution.height, Math.min(1, next.height));
+        const frameResolution = getDetectionResolution(
+          camera,
+          cameraState.global_max_resolution,
+          'fit',
+          1,
+          1,
+          intrinsicResolution,
+        );
+        const frameWidth = frameResolution?.width || cameraState.global_max_resolution.width;
+        const frameHeight = frameResolution?.height || cameraState.global_max_resolution.height;
+        const width = Math.max(1 / frameWidth, Math.min(1, next.width));
+        const height = Math.max(1 / frameHeight, Math.min(1, next.height));
         const x = Math.max(0, Math.min(1 - width, next.x));
         const y = Math.max(0, Math.min(1 - height, next.y));
-        const detectionWidth = Math.max(1, Math.round(width * cameraState.global_max_resolution.width));
-        const detectionHeight = Math.max(1, Math.round(height * cameraState.global_max_resolution.height));
+        const detectionResolution = getDetectionResolution(
+          camera,
+          cameraState.global_max_resolution,
+          'crop',
+          width,
+          height,
+          intrinsicResolution,
+        );
         setForm((previous) => {
           const nextForm = {
             ...previous,
@@ -798,8 +944,12 @@
             roi_y: String(y),
             roi_width: String(width),
             roi_height: String(height),
-            detection_width: String(detectionWidth),
-            detection_height: String(detectionHeight),
+            detection_width: detectionResolution
+              ? String(detectionResolution.width)
+              : previous.detection_width,
+            detection_height: detectionResolution
+              ? String(detectionResolution.height)
+              : previous.detection_height,
           };
           setDirty(JSON.stringify(nextForm) !== baselineRef.current);
           return nextForm;
@@ -969,12 +1119,7 @@
           if (!response.ok) {
             throw new Error(body.detail || `Could not save camera settings (HTTP ${response.status}).`);
           }
-          setCameraState(body);
-          baselineRef.current = JSON.stringify(form);
-          setDirty(false);
-          setNotice(body.pending_reconciliation
-            ? 'Settings saved; they will apply when the vision worker is available.'
-            : 'Camera settings saved.');
+          window.location.reload();
         } catch (saveError) {
           console.error(saveError);
           setError(saveError.message);
@@ -1024,8 +1169,8 @@
               <div className="camera-diagnostics" aria-label="Camera resolution diagnostics">
                 <p><strong>Global cap</strong><span>{formatResolution(cameraState.global_max_resolution)}</span></p>
                 <p><strong>Source resolution</strong><span>{formatResolution(camera.source_resolution)}</span></p>
-                <p><strong>Detection resolution</strong><span>{camera.detection_width} × {camera.detection_height}</span></p>
-                <p><strong>Detection target mode</strong><span>{camera.preprocessing_mode}</span></p>
+                <p><strong>Detection resolution</strong><span>{form.detection_width} × {form.detection_height}</span></p>
+                <p><strong>Detection target mode</strong><span>{form.preprocessing_mode}</span></p>
               </div>
 
               {!cameraActive && (
@@ -1121,11 +1266,11 @@
                 <div className="field-pair">
                   <div className="field">
                     <label className="field__label" htmlFor="detectionWidth">Detection width</label>
-                    <input className="field__input" id="detectionWidth" name="detection_width" type="number" min="1" max={cameraState.global_max_resolution.width} value={form.detection_width} onChange={updateForm} disabled={!cameraActive} required />
+                    <input className="field__input" id="detectionWidth" name="detection_width" type="number" min="1" max={cameraState.global_max_resolution.width} value={form.detection_width} onChange={updateForm} disabled={!cameraActive} readOnly={form.preprocessing_mode === 'fit'} required />
                   </div>
                   <div className="field">
                     <label className="field__label" htmlFor="detectionHeight">Detection height</label>
-                    <input className="field__input" id="detectionHeight" name="detection_height" type="number" min="1" max={cameraState.global_max_resolution.height} value={form.detection_height} onChange={updateForm} disabled={!cameraActive} required />
+                    <input className="field__input" id="detectionHeight" name="detection_height" type="number" min="1" max={cameraState.global_max_resolution.height} value={form.detection_height} onChange={updateForm} disabled={!cameraActive} readOnly={form.preprocessing_mode === 'fit'} required />
                   </div>
                 </div>
 
