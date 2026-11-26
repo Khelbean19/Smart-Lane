@@ -1,0 +1,9 @@
+# Files executed or parsed inside the Linux container must keep LF endings,
+# even when checked out on Windows with core.autocrlf=true.
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+.dockerignore text eol=lf
+requirements.txt text eol=lf
+
+# Model weights are binary; Hugging Face rejects large binaries outside LFS/Xet.
+*.pt filter=lfs diff=lfs merge=lfs -text

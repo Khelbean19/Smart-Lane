@@ -1,0 +1,15 @@
+_______________________________________
+AUTHENTICATION & USER ROUTES
+POST    /api/auth/register
+POST    /api/auth/login
+POST    /api/auth/logout
+GET     /api/users/me
+
+_______________________________________
+CRUD ROUTES
+GET     /api/items
+GET     /api/items/:id
+POST    /api/items
+POST    /api/items/:id
+PATCH   /api/items/:id
+DELETE  /api/items/:id
